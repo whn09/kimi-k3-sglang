@@ -98,34 +98,59 @@ SGLang auto-selects `trtllm_mla` for decode/verify, pins
 `--linear-attn-verify-backend nv_cutedsl` (fused Kimi-K3/DSPARK kernel), and
 defaults the draft to `trtllm_mha`. The MoE runs on `flashinfer_mxfp4`.
 
-### 1P1D over Mooncake/EFA
+### Results
 
-ISL 8192 / OSL 1024, 64 prompts, concurrency 32, DSPARK on, via the router.
+ISL 8192 / OSL 1024, 64 prompts, concurrency 32, DSPARK on. PD runs go through
+the router and move KV over Mooncake/EFA; standalone is a single node, so the
+two standalone profiles were measured in parallel, one per host.
 
-| profile | out tok/s | total tok/s | mean TTFT | mean TPOT | median ITL | mean E2E |
-|---|---|---|---|---|---|---|
-| low-latency (dcp 1/1, symm on, mamba 0.17) | **1598** | 14384 | 10.96 s | **7.12 ms** | **52.5 ms** | **18.25 s** |
-| balanced (dcp 8/8, mamba 1.03) | 1354 | 13540 | **7.23 s** | 11.62 ms | 58.4 ms | 19.12 s |
-| high-throughput (= balanced + decode mem 0.92) | 1436 | 12924 | 8.76 s | 11.24 ms | 57.1 ms | 20.26 s |
+| mode | profile | out tok/s | total tok/s | mean TTFT | median TTFT | mean TPOT | mean E2E |
+|---|---|---|---|---|---|---|---|
+| PD | low-latency (dcp 1/1, symm on, mamba 0.17) | **1598** | **14384** | 10.96 s | 11.48 s | **7.12 ms** | **18.25 s** |
+| PD | balanced (dcp 8/8, mamba 1.03) | 1354 | 13540 | 7.23 s | 6.66 s | 11.62 ms | 19.12 s |
+| PD | high-throughput (= balanced + decode mem 0.92) | 1436 | 12924 | 8.76 s | 9.40 s | 11.24 ms | 20.26 s |
+| standalone | low-latency (dcp 1, custom-AR on, mamba 0.86) | 1225 | 11026 | 7.87 s | 1.95 s | 16.91 ms | 25.17 s |
+| standalone | balanced (dcp 8, mamba 5.13) | 1274 | 11466 | **5.46 s** | **1.82 s** | 18.07 ms | 23.94 s |
 
-64/64 requests succeeded in every run, 0 MR / KV-transfer / geometry errors on
-both sides. Measured from `kimi-k3-efa:latest` built from the fix branch, no
-bind-mounted `.so`. An earlier low-latency run on a hot-patched container gave
-1683 tok/s / 10.06 s TTFT — within run-to-run noise, i.e. the packaged fix
-behaves like the hot patch.
+64/64 requests succeeded in every run, 0 MR / KV-transfer / geometry errors.
+Measured from `kimi-k3-efa:latest` built from the fix branch, no bind-mounted
+`.so`. An earlier PD low-latency run on a hot-patched container gave 1683 tok/s /
+10.06 s TTFT — within run-to-run noise, i.e. the packaged fix behaves like the
+hot patch. Single runs, not averaged.
 
-**The profile names invert at this workload point.** `balanced` buys a 34 %
-better TTFT (10.96 → 7.23 s) by paying 63 % on TPOT (7.12 → 11.62 ms). At OSL
-1024 the accumulated per-token cost dwarfs the one-off TTFT saving, so
-`low-latency` wins on *throughput* too, by 18 %. `high-throughput` only raises
-decode `mem-fraction-static` 0.85 → 0.92, which lands between the two and inside
-noise of `balanced` — at concurrency 32 decode is not KV-capacity-bound, so the
-extra memory buys nothing. Expect the ordering to change at higher concurrency
-or shorter OSL; these are single runs, not averaged.
+**PD beats standalone by 25–30 % on output throughput** (1598 vs 1274) and by
+~2.4× on TPOT (7.12 vs 16.91 ms) — two nodes' worth of hardware, but the win is
+larger than the 2× decode-side FLOPs alone would suggest, because the decode node
+never interleaves prefill chunks into its batches. Standalone wins on *median*
+TTFT (1.8–1.9 s vs 6.7–11.5 s): with no bootstrap handshake or KV transfer, the
+first few requests answer almost immediately, then the queue builds and the mean
+climbs past PD's. So the mean/median gap is a queueing artefact, not a
+transfer-cost signal — Mooncake/EFA's KV hop is not what makes PD's TTFT worse.
 
-Still to fill in: standalone low-latency / balanced (needs the 1P1D pair torn
-down). NIXL (`TRANSFER_BACKEND=nixl`,
-`SGLANG_DISAGGREGATION_NIXL_BACKEND=LIBFABRIC`) is the comparison baseline.
+**The profile names do not describe this workload point.** In PD, `balanced`
+buys a 34 % better TTFT (10.96 → 7.23 s) by paying 63 % on TPOT (7.12 →
+11.62 ms); at OSL 1024 the accumulated per-token cost dwarfs the one-off TTFT
+saving, so `low-latency` wins on throughput too, by 18 %. `high-throughput` only
+raises decode `mem-fraction-static` 0.85 → 0.92 and lands inside noise of
+`balanced` — at concurrency 32 decode is not KV-capacity-bound, so the extra
+memory buys nothing. Standalone `balanced` edges out `low-latency` on both TTFT
+and throughput, i.e. the two profiles are nearly interchangeable here despite
+`balanced`'s far smaller token pool (see below). Expect the ordering to move at
+higher concurrency or shorter OSL.
+
+**`mamba_full_memory_ratio` dominates the standalone token pool.** `balanced`'s
+ratio of 5.13 puts ~17 GB into the KDA state cache
+(`ssm_state size: 15.67 GB`, 309 slots), leaving
+`max_total_num_tokens=63744` — versus 475776 for `low-latency` at ratio 0.86.
+That is a 7.5× smaller pool, and at ISL 8192 × 32 concurrent the working set
+(~262 K tokens) exceeds it 4×, so `balanced` runs KV-bound and recomputes. It
+still measures slightly *faster* because its 309 state slots raise
+`max_running_requests` 35 → 48. The two effects roughly cancel at this point;
+they will not at longer ISL.
+
+NIXL (`TRANSFER_BACKEND=nixl`,
+`SGLANG_DISAGGREGATION_NIXL_BACKEND=LIBFABRIC`) is the comparison baseline and is
+still to be measured.
 
 ## Notes and pitfalls
 
@@ -162,10 +187,12 @@ Persisting the JIT output is what shortens a restart, and the three cache dirs a
 SGLang guide typically tells you to mount are the *wrong* ones on this image —
 `deep_gemm`, `torch` and `flashinfer` stay at 4–12 KB. The caches that actually
 get written live in `/root/.cache/tvm-ffi` (sgl_kernel JIT, ~58 MB),
-`/root/.cache/sglang` (FlashInfer autotune results), `/root/.triton` (~5 MB) and
-`/root/.nv/ComputeCache` (CUDA/PTX JIT, ~800 MB). `CACHE_MOUNTS` in
-`env_common.sh` maps all seven to `$HOST_CACHE_DIR`. Confirm a mount is doing
-something with
+`/root/.cache/sglang` (FlashInfer autotune results), `/root/.triton` and
+`/root/.nv/ComputeCache` (CUDA/PTX JIT). `CACHE_MOUNTS` in `env_common.sh` maps
+all seven to `$HOST_CACHE_DIR`; after one launch the host side holds ~971 MB
+(nv_compute 867 M, tvm-ffi 65 M, triton 39 M, sglang 92 K) that every previous
+restart had thrown away, while the three conventional dirs are still 4–12 KB.
+Confirm a mount is doing something with
 
 ```bash
 docker exec kimi-k3-prefill find /root/.cache/tvm-ffi -type f -newermt '-20 min' | wc -l
