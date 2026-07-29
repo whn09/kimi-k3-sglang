@@ -1,0 +1,32 @@
+09:30:10 prefill=000 decode=000
+09:30:45 prefill=000 decode=000
+09:31:19 prefill=000 decode=000
+09:31:53 prefill=000 decode=000
+09:32:27 prefill=000 decode=000
+09:33:02 prefill=000 decode=000
+09:33:36 prefill=000 decode=000
+09:34:10 prefill=000 decode=000
+09:34:44 prefill=000 decode=000
+09:35:18 prefill=000 decode=000
+09:35:54 prefill=200 decode=000
+09:36:30 prefill=200 decode=200
+speculative_algorithm=None
+router ready
+===== NO_SPEC run 1 =====
+Successful requests:                     64        
+Output token throughput (tok/s):         938.52    
+Mean TTFT (ms):                          4504.60   
+Mean TPOT (ms):                          27.30     
+Median ITL (ms):                         28.18     
+===== NO_SPEC run 2 =====
+Successful requests:                     64        
+Output token throughput (tok/s):         939.16    
+Mean TTFT (ms):                          4452.59   
+Mean TPOT (ms):                          27.33     
+Median ITL (ms):                         28.19     
+===== NO_SPEC run 3 =====
+Successful requests:                     64        
+Output token throughput (tok/s):         940.29    
+Mean TTFT (ms):                          4407.41   
+Mean TPOT (ms):                          27.33     
+Median ITL (ms):                         28.19     

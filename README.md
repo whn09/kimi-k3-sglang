@@ -189,8 +189,26 @@ verify-budget scheduler is inert here — no `--speculative-dspark-sps-table-pat
 means `build_uninitialized_sps_table()`, and the server itself warns that the
 budget then "degenerates to verify-all (zero scheduling gain)".
 
-The remaining suspect is decode-side `--enable-linear-replayssm-spec` (on by
-default here, with `mamba_ssm_dtype=float32`). KDA's rollback path
+**Turning DSPARK off removes the decay entirely.** Same config otherwise (PD
+balanced, dcp 8/8, mamba 1.03, Mooncake/EFA), `NO_SPEC=1`, three runs on one
+container generation — `speculative_algorithm=None` verified in `server_args`:
+
+| | run 1 | run 2 | run 3 | run 4 |
+|---|---|---|---|---|
+| DSPARK on | 1667.8 | 1009.3 | 933.8 | 878 |
+| DSPARK off | 938.5 | 939.2 | 940.3 | — |
+
+Spread across the three no-spec runs is 0.19 %, and median ITL is 28.18 / 28.19 /
+28.19 ms. Two things follow. First, **only the first run benefits from
+speculation** (+78 %). Second, the degraded plateau (~878) is *below* the no-spec
+throughput (~939): once accept rate reaches 0.01 the draft is pure overhead, which
+the ITL confirms — 28.2 ms/step without speculation versus 57–58 ms/step with it,
+because each step drafts 7 tokens and verifies them. So at accept len ≈ 1 the
+per-token cost is roughly 2× the non-speculative baseline.
+
+That isolates the cause to **DSPARK's cross-request state on a PD decode node**.
+The prime suspect is decode-side `--enable-linear-replayssm-spec` (on by default
+here, with `mamba_ssm_dtype=float32`). KDA's rollback path
 (`commit_kda_replayssm_after_verify` in `srt/speculative/spec_utils.py`) replays
 the accepted window into an fp32 `temporal` checkpoint on every commit, and in PD
 mode the KDA state starts from a cross-node KV transfer — the one ingredient
@@ -198,6 +216,12 @@ standalone lacks. Slot reuse is not the issue: the ring cursors are zeroed on
 alloc (`mem_cache/memory_pool.py:1305-1312`). The working hypothesis is that the
 folded SSM checkpoint drifts from the target's true recurrent state, so the draft
 mispredicts progressively more.
+
+Note that the cookbook's own no-DSPARK decode command pairs `--dcp-size 8` with
+`--mamba-full-memory-ratio 1.44` rather than 1.03, since no draft model has to be
+budgeted for. This control deliberately held mamba at 1.03 so that speculation was
+the only variable, so 939 tok/s understates what a properly-tuned no-spec config
+would reach — it does not affect the conclusion that the decay disappears.
 
 **Treat the dcp=8 rows as first-run numbers.** A restart fully recovers them, so
 the workaround is to restart decode between measurements, or to run
