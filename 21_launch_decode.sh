@@ -12,8 +12,7 @@ NAME="${NAME:-kimi-k3-decode}"
 # symm_allocator: --enable-symm-mem JIT-compiles torch's NCCL allocator into
 # /tmp/symm_allocator, which is container-local and so rebuilt on every launch
 # (~1-2 min). Persisting it on the host makes restarts reuse the .so.
-mkdir -p "$HOST_CACHE_DIR/deep_gemm" "$HOST_CACHE_DIR/torch" \
-         "$HOST_CACHE_DIR/flashinfer" "$HOST_CACHE_DIR/symm_allocator"
+build_cache_args "/tmp/symm_allocator=symm_allocator"
 
 # Unmapping ~1.5 TB of model volumes can outlast a single `rm -f`, leaving the
 # container Exited-but-present and the next `docker run` failing with "container
@@ -39,10 +38,7 @@ docker run -d --name "$NAME" \
     --shm-size=600g \
     -v "$HOST_MODEL_DIR/Kimi-K3:/models/Kimi-K3:ro" \
     -v "$HOST_MODEL_DIR/Kimi-K3-DSpark:/models/Kimi-K3-DSpark:ro" \
-    -v "$HOST_CACHE_DIR/deep_gemm:/root/.cache/deep_gemm" \
-    -v "$HOST_CACHE_DIR/torch:/root/.cache/torch" \
-    -v "$HOST_CACHE_DIR/flashinfer:/root/.cache/flashinfer" \
-    -v "$HOST_CACHE_DIR/symm_allocator:/tmp/symm_allocator" \
+    "${CACHE_ARGS[@]}" \
     -v "$SCRIPT_DIR_HOST:/host/kimi-k3-aws:ro" \
     -e NO_SPEC="${NO_SPEC:-0}" \
     -e MEM_FRACTION="${MEM_FRACTION:-$DECODE_MEM_FRACTION}" \

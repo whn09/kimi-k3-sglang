@@ -11,7 +11,7 @@ cd "$(dirname "$0")"
 source ./env_common.sh
 
 NAME="${NAME:-kimi-k3}"
-mkdir -p "$HOST_CACHE_DIR/deep_gemm" "$HOST_CACHE_DIR/torch" "$HOST_CACHE_DIR/flashinfer"
+build_cache_args "/tmp/symm_allocator=symm_allocator"
 
 docker rm -f "$NAME" 2>/dev/null || true
 
@@ -27,9 +27,7 @@ docker run -d --name "$NAME" \
     --shm-size=600g \
     -v "$HOST_MODEL_DIR/Kimi-K3:/models/Kimi-K3:ro" \
     -v "$HOST_MODEL_DIR/Kimi-K3-DSpark:/models/Kimi-K3-DSpark:ro" \
-    -v "$HOST_CACHE_DIR/deep_gemm:/root/.cache/deep_gemm" \
-    -v "$HOST_CACHE_DIR/torch:/root/.cache/torch" \
-    -v "$HOST_CACHE_DIR/flashinfer:/root/.cache/flashinfer" \
+    "${CACHE_ARGS[@]}" \
     -v "$SCRIPT_DIR_HOST:/host/kimi-k3-aws:ro" \
     -e NO_SPEC="${NO_SPEC:-0}" \
     -e MEM_FRACTION="${MEM_FRACTION:-$STANDALONE_MEM_FRACTION}" \

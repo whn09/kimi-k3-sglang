@@ -8,6 +8,39 @@ HOST_MODEL_DIR="${HOST_MODEL_DIR:-$NVME/models}"
 HOST_CACHE_DIR="${HOST_CACHE_DIR:-$NVME/cache}"
 SCRIPT_DIR_HOST="${SCRIPT_DIR_HOST:-/home/ubuntu/kimi-k3-aws}"
 
+# ---- JIT / autotune caches to persist on the host ----
+# Every launch otherwise recompiles from scratch: on a cold container 100% of the
+# files in these dirs are newly written (verified with find -newermt), costing
+# ~140 s inside "Load weight" (the three "Precompiled ..." K3 kernels) plus a
+# ~4.4 min FlashInfer autotune. Note that the three dirs an SGLang guide usually
+# tells you to mount — deep_gemm, torch, flashinfer — stay at 4-12 KB on this
+# image: the real caches moved to tvm-ffi / .triton / .nv / .cache/sglang.
+#
+# "container path=host subdir". Keys inside these caches include the arch and
+# the library version (e.g. ..._arch_10.3a__tvmffi_0.1.11), so they are safe
+# across image rebuilds; wipe $HOST_CACHE_DIR if a rebuild ever misbehaves.
+CACHE_MOUNTS=(
+    "/root/.cache/deep_gemm=deep_gemm"
+    "/root/.cache/torch=torch"
+    "/root/.cache/flashinfer=flashinfer"
+    "/root/.cache/tvm-ffi=tvm-ffi"          # sgl_kernel JIT (K3 attn/MoE), ~58 MB
+    "/root/.cache/sglang=sglang"            # FlashInfer autotune results
+    "/root/.triton=triton"                  # Triton kernels
+    "/root/.nv/ComputeCache=nv_compute"     # CUDA/PTX JIT, ~800 MB
+)
+
+# Fills the CACHE_ARGS array with docker -v flags, creating the host dirs first.
+# Extra args are further "container=host" entries (decode adds symm_allocator).
+build_cache_args() {
+    local entry cpath hsub
+    CACHE_ARGS=()
+    for entry in "${CACHE_MOUNTS[@]}" "$@"; do
+        cpath="${entry%%=*}"; hsub="${entry#*=}"
+        mkdir -p "$HOST_CACHE_DIR/$hsub"
+        CACHE_ARGS+=(-v "$HOST_CACHE_DIR/$hsub:$cpath")
+    done
+}
+
 # ---- paths (inside container) ----
 MODEL_PATH="${MODEL_PATH:-/models/Kimi-K3}"
 DRAFT_MODEL_PATH="${DRAFT_MODEL_PATH:-/models/Kimi-K3-DSpark}"

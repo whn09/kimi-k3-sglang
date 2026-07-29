@@ -31,7 +31,7 @@ Models live on `/opt/dlami/nvme` (27 TB); host python venv is `/opt/pytorch`.
 | File | Runs on | Purpose |
 |---|---|---|
 | `Dockerfile` | host | kimi-k3 base + EFA + gdrcopy + Mooncake `-DUSE_EFA=ON` |
-| `env_common.sh` | both | shared paths/IPs/env, `PROFILE` table, `require_efa_image` |
+| `env_common.sh` | both | shared paths/IPs/env, `PROFILE` table, `CACHE_MOUNTS`, `require_efa_image` |
 | `00_download_models.sh` | host | fetch both models to NVMe |
 | `10_launch_standalone.sh` | host | single-node container |
 | `20_launch_prefill.sh` / `21_launch_decode.sh` | host | PD containers |
@@ -102,19 +102,30 @@ defaults the draft to `trtllm_mha`. The MoE runs on `flashinfer_mxfp4`.
 
 ISL 8192 / OSL 1024, 64 prompts, concurrency 32, DSPARK on, via the router.
 
-| mode | profile | out tok/s | mean TTFT | mean TPOT | median ITL |
-|---|---|---|---|---|---|
-| PD | low-latency | **1598** | 10.96 s | 7.12 ms | 52.5 ms |
+| profile | out tok/s | total tok/s | mean TTFT | mean TPOT | median ITL | mean E2E |
+|---|---|---|---|---|---|---|
+| low-latency (dcp 1/1, symm on, mamba 0.17) | **1598** | 14384 | 10.96 s | **7.12 ms** | **52.5 ms** | **18.25 s** |
+| balanced (dcp 8/8, mamba 1.03) | 1354 | 13540 | **7.23 s** | 11.62 ms | 58.4 ms | 19.12 s |
+| high-throughput (= balanced + decode mem 0.92) | 1436 | 12924 | 8.76 s | 11.24 ms | 57.1 ms | 20.26 s |
 
-64/64 requests succeeded, benchmark duration 41 s. Measured from
-`kimi-k3-efa:latest` built from the fix branch, no bind-mounted `.so`. An earlier
-run of the same config on a hot-patched container gave 1683 tok/s / 10.06 s TTFT
-— within run-to-run noise, i.e. the packaged fix behaves like the hot patch.
+64/64 requests succeeded in every run, 0 MR / KV-transfer / geometry errors on
+both sides. Measured from `kimi-k3-efa:latest` built from the fix branch, no
+bind-mounted `.so`. An earlier low-latency run on a hot-patched container gave
+1683 tok/s / 10.06 s TTFT — within run-to-run noise, i.e. the packaged fix
+behaves like the hot patch.
 
-Still to fill in: PD balanced / high-throughput (both need `PREFILL_DCP_SIZE=8`,
-see below) and standalone low-latency / balanced. NIXL
-(`TRANSFER_BACKEND=nixl`, `SGLANG_DISAGGREGATION_NIXL_BACKEND=LIBFABRIC`) is the
-comparison baseline.
+**The profile names invert at this workload point.** `balanced` buys a 34 %
+better TTFT (10.96 → 7.23 s) by paying 63 % on TPOT (7.12 → 11.62 ms). At OSL
+1024 the accumulated per-token cost dwarfs the one-off TTFT saving, so
+`low-latency` wins on *throughput* too, by 18 %. `high-throughput` only raises
+decode `mem-fraction-static` 0.85 → 0.92, which lands between the two and inside
+noise of `balanced` — at concurrency 32 decode is not KV-capacity-bound, so the
+extra memory buys nothing. Expect the ordering to change at higher concurrency
+or shorter OSL; these are single runs, not averaged.
+
+Still to fill in: standalone low-latency / balanced (needs the 1P1D pair torn
+down). NIXL (`TRANSFER_BACKEND=nixl`,
+`SGLANG_DISAGGREGATION_NIXL_BACKEND=LIBFABRIC`) is the comparison baseline.
 
 ## Notes and pitfalls
 
@@ -138,6 +149,30 @@ NCCL silently falls back to TCP (~14 GB/s vs ~400 GB/s), which reads as slow
 TTFT rather than an error. Verify with
 `NCCL_DEBUG=INFO NCCL_DEBUG_SUBSYS=INIT,NET` → expect
 `NET/OFI Selected provider is efa`.
+
+**Startup is ~10 min and most of it is JIT, not weight I/O.** A cold prefill
+container spends 32 s on distributed init, **140 s** inside `Load weight` (three
+"Precompiled the Kimi-K3 KDA / vision RoPE / vision FA4 kernel" steps plus
+CUTLASS DSL codegen — the 1.5 TB read itself is a minor part), **262 s** in
+FlashInfer autotune, and ~2 min on CUDA-graph capture and warmup. None of it
+depends on the serving flags, so changing only `--mem-fraction-static` still
+costs the full 10 minutes.
+
+Persisting the JIT output is what shortens a restart, and the three cache dirs an
+SGLang guide typically tells you to mount are the *wrong* ones on this image —
+`deep_gemm`, `torch` and `flashinfer` stay at 4–12 KB. The caches that actually
+get written live in `/root/.cache/tvm-ffi` (sgl_kernel JIT, ~58 MB),
+`/root/.cache/sglang` (FlashInfer autotune results), `/root/.triton` (~5 MB) and
+`/root/.nv/ComputeCache` (CUDA/PTX JIT, ~800 MB). `CACHE_MOUNTS` in
+`env_common.sh` maps all seven to `$HOST_CACHE_DIR`. Confirm a mount is doing
+something with
+
+```bash
+docker exec kimi-k3-prefill find /root/.cache/tvm-ffi -type f -newermt '-20 min' | wc -l
+```
+
+— on a launch that reused the cache this is ~0; when it equals the total file
+count, everything was recompiled.
 
 **Benign startup warnings**: `Failed to load generation config for
 .../Kimi-K3-DSpark` (the draft repo has no `generation_config.json`);

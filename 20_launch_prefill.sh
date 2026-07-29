@@ -9,7 +9,7 @@ cd "$(dirname "$0")"
 source ./env_common.sh
 
 NAME="${NAME:-kimi-k3-prefill}"
-mkdir -p "$HOST_CACHE_DIR/deep_gemm" "$HOST_CACHE_DIR/torch" "$HOST_CACHE_DIR/flashinfer"
+build_cache_args
 
 # Unmapping ~1.5 TB of model volumes can outlast a single `rm -f`, leaving the
 # container Exited-but-present and the next `docker run` failing with "container
@@ -35,9 +35,7 @@ docker run -d --name "$NAME" \
     --shm-size=600g \
     -v "$HOST_MODEL_DIR/Kimi-K3:/models/Kimi-K3:ro" \
     -v "$HOST_MODEL_DIR/Kimi-K3-DSpark:/models/Kimi-K3-DSpark:ro" \
-    -v "$HOST_CACHE_DIR/deep_gemm:/root/.cache/deep_gemm" \
-    -v "$HOST_CACHE_DIR/torch:/root/.cache/torch" \
-    -v "$HOST_CACHE_DIR/flashinfer:/root/.cache/flashinfer" \
+    "${CACHE_ARGS[@]}" \
     -v "$SCRIPT_DIR_HOST:/host/kimi-k3-aws:ro" \
     -e NO_SPEC="${NO_SPEC:-0}" \
     -e MEM_FRACTION="${MEM_FRACTION:-0.85}" \
