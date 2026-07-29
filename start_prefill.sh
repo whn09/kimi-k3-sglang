@@ -1,9 +1,10 @@
 #!/bin/bash
 # In-container: PD-disagg PREFILL node (B300-1, TP=8), Mooncake/EFA KV transfer.
 #
-# Follows the upstream lmsys 1P1D reference command, with the transfer backend
-# switched from nixl to mooncake. Note the asymmetry with the decode side, which
-# is intentional and taken from that reference:
+# Follows the 1P1D reference command from the SGLang cookbook
+# (https://docs.sglang.io/cookbook/autoregressive/Moonshotai/Kimi-K3), with the
+# transfer backend switched from nixl to mooncake. Note the asymmetry with the
+# decode side, which is intentional and taken from that reference:
 #   - prefill gets --enable-symm-mem, chunked/max prefill tokens
 #   - decode gets --dcp-size 8, extra slots, a >1 mamba ratio, and
 #     --enable-linear-replayssm-spec

@@ -17,8 +17,10 @@ DRAFT_MODEL_PATH="${DRAFT_MODEL_PATH:-/models/Kimi-K3-DSpark}"
 IMAGE="${IMAGE:-kimi-k3-efa:latest}"
 
 # ---- serving profile ----
-# Upstream publishes low-latency / balanced / high-throughput variants of both
-# the standalone server and the PD decode node. Several knobs move together, and
+# The SGLang cookbook page for this model
+# (https://docs.sglang.io/cookbook/autoregressive/Moonshotai/Kimi-K3) publishes
+# low-latency / balanced / high-throughput variants of both the standalone server
+# and the PD decode node. Several knobs move together, and
 # the standalone and decode tables are NOT the same — notably the custom
 # all-reduce, which standalone/low-latency keeps but every PD decode disables.
 #

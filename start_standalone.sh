@@ -1,8 +1,10 @@
 #!/bin/bash
 # In-container: single-node Kimi-K3 on 8x B300 (TP=8).
 #
-# Mirrors the upstream lmsys reference command, adapted for local weights on
-# NVMe instead of an HF-hub pull. Launched by 10_launch_standalone.sh.
+# Mirrors the reference command from the SGLang cookbook
+# (https://docs.sglang.io/cookbook/autoregressive/Moonshotai/Kimi-K3), adapted
+# for local weights on NVMe instead of an HF-hub pull. Launched by
+# 10_launch_standalone.sh.
 #
 # Set NO_SPEC=1 to drop DSPARK speculative decoding — do this for the first
 # bring-up so a draft-model problem cannot be confused with a base-model one.

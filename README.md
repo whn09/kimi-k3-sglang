@@ -45,6 +45,13 @@ Models live on `/opt/dlami/nvme` (27 TB); host python venv is `/opt/pytorch`.
 variant; `env_common.sh` documents which knobs each one moves, and they differ
 between standalone and PD decode.
 
+The launch commands follow the SGLang cookbook recipe for this model —
+[docs.sglang.io/cookbook/autoregressive/Moonshotai/Kimi-K3](https://docs.sglang.io/cookbook/autoregressive/Moonshotai/Kimi-K3)
+— which is also where the three profiles and the 1P1D reference command come
+from. The deliberate departures from it are: `--disaggregation-transfer-backend
+mooncake` instead of nixl, and a prefill `--dcp-size` matching decode's for the
+balanced / high-throughput profiles (see the DCP note below).
+
 ## Quick start
 
 ```bash

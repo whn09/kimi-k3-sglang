@@ -1,8 +1,9 @@
 #!/bin/bash
 # In-container: PD-disagg DECODE node (B300-2, TP=8), Mooncake/EFA KV transfer.
 #
-# Follows the upstream lmsys 1P1D reference command with nixl -> mooncake.
-# Decode-side specifics from that reference:
+# Follows the 1P1D reference command from the SGLang cookbook
+# (https://docs.sglang.io/cookbook/autoregressive/Moonshotai/Kimi-K3) with
+# nixl -> mooncake. Decode-side specifics from that reference:
 #   --dcp-size 8                   decode context parallel across all 8 GPUs
 #   --mamba-full-memory-ratio 1.03 >1 is deliberate here (decode holds no
 #                                  prefill activations, so the hybrid KDA state
