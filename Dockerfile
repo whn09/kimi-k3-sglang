@@ -77,11 +77,34 @@ RUN cd /tmp && \
 # EfaContext::construct shows `movabs $0x800000003306` — bit 47 is set), and a
 # VMM/mempool allocator (the failing buffers are plain cudaMalloc).
 #
+# The branch below is fix/efa-gpu-mr-cuda-context plus one commit that bounds
+# the batch MR registration fan-out. registerLocalMemoryBatch() used to spawn
+# one std::async(std::launch::async) per buffer with no cap, i.e. one fresh
+# thread each; K3 registers 1376 buffers, so the startup registration window was
+# 138.7 s on decode with a 138-thread peak. Capping the fan-out cuts that to
+# 54.1 s at 32 threads (prefill 49.6 s) with identical throughput (939.72 vs the
+# 938.5-940.3 baseline band).
+#
+# Fewer threads are faster here, not slower -- registration serializes on the
+# EFA provider's per-domain lock, so this is contention, not CPU work. Sweeping
+# MC_MAX_CONCURRENT_REG_MR over the dominant 138-buffer batch on this node:
+# unbounded 138.7 s, 128 -> 130.1 s, 32 -> 51.0 s, 8 -> 20.7 s, 4 -> 24.8 s. The
+# branch defaults to 8; override with MC_MAX_CONCURRENT_REG_MR if a different
+# instance type moves that optimum.
+#
+# Still ~7x slower than NIXL's ~4 s, and the reason is upstream of this cap:
+# efa_transport.cpp only takes the NIC-parallel registration path when the
+# buffer is host memory (it gates on pre-touch, which is skipped for VRAM), so
+# each GPU buffer registers on all 16 NICs serially -- 138 x 16 = 2208
+# fi_mr_regattr calls at ~700 ms each. Cutting that needs either
+# MC_ENABLE_PARALLEL_REG_MR=1 (untested here, and the sweep above suggests more
+# concurrency may backfire) or a smaller NIC fan-out per buffer.
+#
 # MOONCAKE_REF is unpinned by default so rebuilds pick up branch updates; set it
 # to a commit sha for a reproducible image. `git log --oneline -1` below records
 # what an image was actually built from — check it before debugging a KV failure.
 ARG MOONCAKE_REPO=https://github.com/whn09/Mooncake.git
-ARG MOONCAKE_REF=fix/efa-gpu-mr-cuda-context
+ARG MOONCAKE_REF=fix/efa-mr-reg-throttle
 RUN pip uninstall -y mooncake-transfer-engine mooncake 2>/dev/null || true
 RUN cd /tmp && \
     git clone --depth 1 --branch "$MOONCAKE_REF" "$MOONCAKE_REPO" Mooncake || \

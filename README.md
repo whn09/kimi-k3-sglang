@@ -86,10 +86,12 @@ container generation, and gates each on `/health` plus a read-back of `dcp_size`
 plausible-looking number. It runs on the laptop because the two hosts have no ssh
 trust between them.
 
-The Dockerfile builds Mooncake from `whn09/Mooncake@fix/efa-gpu-mr-cuda-context`
-(upstream PR
-[#3177](https://github.com/kvcache-ai/Mooncake/pull/3177)) — override with
-`--build-arg MOONCAKE_REPO=... --build-arg MOONCAKE_REF=...` once that lands.
+The Dockerfile builds Mooncake from `whn09/Mooncake@fix/efa-mr-reg-throttle`,
+which is the GPU-MR CUDA-context fix (upstream PR
+[#3177](https://github.com/kvcache-ai/Mooncake/pull/3177)) plus the bounded
+registration fan-out described [below](#bounding-the-fan-out-1387-s--207-s-on-the-dominant-batch)
+— override with `--build-arg MOONCAKE_REPO=... --build-arg MOONCAKE_REF=...` once
+those land upstream.
 
 Startup takes ~11 min: ~6 min to load 1.5 TB of weights, then FlashInfer
 autotune + CUDA graph capture. **GPU utilisation reads 0% for almost all of
@@ -293,14 +295,69 @@ concurrent registrations on a 192-core box, so the `duration=` each line reports
 is queueing delay, not registration time. That is the one place Mooncake is 30×
 behind NIXL on K3, and it is a startup cost only, not a serving cost.
 
-Fix in progress on `whn09/Mooncake@fix/efa-mr-reg-throttle`: bound the fan-out to
-a fixed pool (`MC_MAX_CONCURRENT_REG_MR`, default `nproc/4` clamped to [4, 32]),
-demote the 1456 per-chunk `LOG(WARNING)` lines to the existing trace gate, and log
-one batch total instead. The numbers above are from before that change; rebuild
-the image against that branch to re-measure the startup column.
-
 Measured against the PR #3177 branch as of image build 05:42 UTC, which predates
 that PR's last two (non-perf) commits.
+
+#### Bounding the fan-out: 138.7 s → 20.7 s on the dominant batch
+
+`whn09/Mooncake@fix/efa-mr-reg-throttle` replaces both batch fan-outs with a
+fixed pool (`MC_MAX_CONCURRENT_REG_MR`), demotes the per-chunk `LOG(WARNING)` to
+the existing trace gate, and logs one batch total instead. Verified by building
+that branch and bind-mounting the resulting `engine.cpython-312-*.so` over the
+image's copy, so nothing but Mooncake changed:
+
+| | baseline (unbounded) | bounded, cap 32 |
+|---|---|---|
+| decode registration window | 09:34:00.7 → 09:36:19.3 = **138.7 s** | 10:11:18.0 → 10:12:12.0 = **54.1 s** |
+| prefill registration window | — | 10:15:48.6 → 10:16:38.2 = **49.6 s** |
+| buffers registered | 1376 | 1376 |
+| peak threads (largest batch) | 138 — one per buffer | 32 |
+| slowest self-reported chunk | 134.9 s | 52.1 s ≈ the batch wall time |
+| `WARNING` lines per startup | 1376 | 0 |
+
+Output throughput is unchanged: **939.72** tok/s against the 938.5–940.3 baseline
+band (`NO_SPEC=1`, PD balanced, ISL 8192 / OSL 1024 / c32, 64/64 successful),
+median ITL 28.16 vs 28.18–28.19 ms.
+
+**Fewer threads are faster.** Sweeping the cap over the dominant 138-buffer batch
+(everything else held fixed) is not monotonic in the direction you would expect:
+
+| `MC_MAX_CONCURRENT_REG_MR` | 138-buffer batch |
+|---|---|
+| unbounded (138 threads) | 138.7 s |
+| 128 | 130.1 s |
+| 32 | 51.0 s |
+| **8** | **20.7 s** |
+| 4 | 24.8 s |
+
+It falls from 128 down to 8 and then turns back up, so 8 is a real optimum rather
+than the end of a slope. Registration is not CPU-bound — it pins pages and
+serializes on the EFA provider's per-domain lock — so extra threads buy
+contention, not parallelism. Note the practical consequence: the branch's first
+revision defaulted to `nproc/4` clamped to [4, 32], which on these 192-core nodes
+picks exactly 32, the worst admissible value. It now defaults to a flat 8.
+
+#### Why it is still ~5x NIXL, and where the rest is
+
+Even at cap 8 the window is far above NIXL's 4 s, and the cause is upstream of
+the cap. `efa_transport.cpp` only takes the NIC-parallel registration path when
+`parallel_reg_mr == -1` (the default) **and** the buffer was pre-touched — and
+pre-touch is skipped for VRAM, because a CPU-side store into a `cudaMalloc`
+pointer segfaults:
+
+```cpp
+bool is_host_mem = resolved_name.rfind("cpu", 0) == 0;
+bool do_pre_touch = is_host_mem && ...;                       // false for the KV cache
+use_parallel_reg = assigned_nics.size() > 1 && do_pre_touch;  // so: 0
+```
+
+The KV cache is GPU memory, so **every buffer registers on all 16 NICs
+serially**. That is 138 × 16 = 2208 `fi_mr_regattr` calls in the big batch, ~700
+ms each (220 MB per buffer at 4 KB pages, re-pinned once per NIC). Two levers,
+neither tested yet: force the NIC-parallel path with
+`MC_ENABLE_PARALLEL_REG_MR=1` (which would push concurrency to 8 × 16 = 128 —
+and the sweep above says that direction backfires), or shrink the per-buffer NIC
+fan-out so there is simply less to register.
 
 ## Notes and pitfalls
 
