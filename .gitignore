@@ -1,0 +1,9 @@
+# Benchmark output: raw logs + JSON summaries from 91_bench.sh / 92_sweep.sh.
+# Committed selectively — see results/README.md for the curated numbers.
+results/*.log
+results/*.json
+
+# Local scratch
+*.pyc
+__pycache__/
+.DS_Store
