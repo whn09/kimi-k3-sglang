@@ -1,0 +1,73 @@
+matrix: isl=8192 osl=1024 n=64 conc=32 repeats=4 backend=mooncake
+configs: pd:balanced
+started: 2026-07-29T08:54:32Z
+
+########## mode=pd profile=balanced  (2026-07-29T08:54:33Z) ##########
+80104d22283b229b80c454ab699c30bfbf3817d91dcb3a94d300070e4a78e4be
+launched 'kimi-k3-prefill' (profile=balanced, mem=0.85, dcp=8, mamba=1.03, backend=mooncake)  ->  docker logs -f kimi-k3-prefill
+df174d3e7408d649caa78848f50d456efbc860914fd5d3957b628ef592001235
+launched 'kimi-k3-decode' (profile=balanced, mem=0.85, dcp=8, mamba=1.03, symm=off)  ->  docker logs -f kimi-k3-decode
+  ready: prefill after 420s
+  ready: decode after 30s
+  verified kimi-k3-prefill dcp_size=8
+  verified kimi-k3-prefill mamba_full_memory_ratio=1.03
+  verified kimi-k3-prefill mem_fraction_static=0.85
+  verified kimi-k3-decode dcp_size=8
+  verified kimi-k3-decode mamba_full_memory_ratio=1.03
+  verified kimi-k3-decode mem_fraction_static=0.85
+  ready: router after 30s
+----- run 1/4  tag=pd-balanced-mooncake-isl8192-osl1024-c32-r1 -----
+Successful requests:                     64        
+Benchmark duration (s):                  39.47     
+Request throughput (req/s):              1.62      
+Output token throughput (tok/s):         1660.48   
+Total token throughput (tok/s):          14944.34  
+Mean E2E Latency (ms):                   16966.68  
+Mean TTFT (ms):                          5223.44   
+Median TTFT (ms):                        4019.74   
+Mean TPOT (ms):                          11.48     
+Median TPOT (ms):                        10.36     
+Mean ITL (ms):                           52.28     
+Median ITL (ms):                         57.28     
+----- run 2/4  tag=pd-balanced-mooncake-isl8192-osl1024-c32-r2 -----
+Successful requests:                     64        
+Benchmark duration (s):                  63.14     
+Request throughput (req/s):              1.01      
+Output token throughput (tok/s):         1037.92   
+Total token throughput (tok/s):          9341.32   
+Mean E2E Latency (ms):                   23794.58  
+Mean TTFT (ms):                          4706.21   
+Median TTFT (ms):                        2547.77   
+Mean TPOT (ms):                          18.66     
+Median TPOT (ms):                        13.81     
+Mean ITL (ms):                           51.61     
+Median ITL (ms):                         56.46     
+----- run 3/4  tag=pd-balanced-mooncake-isl8192-osl1024-c32-r3 -----
+Successful requests:                     64        
+Benchmark duration (s):                  68.13     
+Request throughput (req/s):              0.94      
+Output token throughput (tok/s):         961.97    
+Total token throughput (tok/s):          8657.71   
+Mean E2E Latency (ms):                   26808.83  
+Mean TTFT (ms):                          4862.64   
+Median TTFT (ms):                        2784.70   
+Mean TPOT (ms):                          21.45     
+Median TPOT (ms):                        20.32     
+Mean ITL (ms):                           52.89     
+Median ITL (ms):                         56.75     
+----- run 4/4  tag=pd-balanced-mooncake-isl8192-osl1024-c32-r4 -----
+Successful requests:                     64        
+Benchmark duration (s):                  74.65     
+Request throughput (req/s):              0.86      
+Output token throughput (tok/s):         877.88    
+Total token throughput (tok/s):          7900.88   
+Mean E2E Latency (ms):                   30047.62  
+Mean TTFT (ms):                          5286.29   
+Median TTFT (ms):                        3631.84   
+Mean TPOT (ms):                          24.20     
+Median TPOT (ms):                        23.32     
+Mean ITL (ms):                           53.57     
+Median ITL (ms):                         58.01     
+
+finished: 2026-07-29T09:08:48Z
+raw logs: on the hosts under /home/ubuntu/kimi-k3-aws/results/ -- 'bash sync.sh pull' to fetch

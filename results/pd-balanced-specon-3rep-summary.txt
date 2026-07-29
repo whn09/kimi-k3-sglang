@@ -1,0 +1,18 @@
+===== SPEC-ON run 1 =====
+Successful requests:                     64        
+Output token throughput (tok/s):         1667.75   
+Mean TTFT (ms):                          5342.39   
+Mean TPOT (ms):                          11.34     
+Median ITL (ms):                         58.01     
+===== SPEC-ON run 2 =====
+Successful requests:                     64        
+Output token throughput (tok/s):         1009.28   
+Mean TTFT (ms):                          4995.68   
+Mean TPOT (ms):                          18.94     
+Median ITL (ms):                         56.67     
+===== SPEC-ON run 3 =====
+Successful requests:                     64        
+Output token throughput (tok/s):         933.83    
+Mean TTFT (ms):                          5249.90   
+Mean TPOT (ms):                          21.75     
+Median ITL (ms):                         57.35     

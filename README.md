@@ -118,7 +118,8 @@ each config relaunched from scratch and its `dcp_size` /
 `mamba_full_memory_ratio` / `mem_fraction_static` read back out of `server_args`
 before benchmarking. All ten runs did identical work: 64/64 successful, 524288
 input tokens, 65536 generated, 0 errors. Both runs are shown because the spread
-turned out to be the most interesting result.
+turned out to be the most interesting result — see the accept-length collapse
+below, which is why the dcp=8 rows should be read as first-run numbers.
 
 | mode | profile | out tok/s (r1 / r2) | total tok/s | mean TTFT | median TTFT | mean TPOT |
 |---|---|---|---|---|---|---|
@@ -136,26 +137,72 @@ worth of hardware, but more than the 2× decode-side FLOPs alone would give,
 because the decode node never interleaves prefill chunks into its batches.
 
 **Both PD dcp=8 profiles lose ~39 % on their second run** (1649 → 1000,
-1676 → 1030) with identical token counts, unchanged median ITL (57.97 → 57.62 ms)
-and mean TPOT nearly doubled — requests were not generating more slowly, they
-were stalling. Mean/median TTFT actually *improved*, so it is not admission
-pressure at the front either. The two profiles differ only in decode
-`mem-fraction-static`, and they degrade by the same amount, which rules that knob
-out as the cause.
+1676 → 1030) with identical token counts and unchanged median ITL
+(57.97 → 57.62 ms). It is not a one-off cliff: a 4-repeat re-run decays
+monotonically and then saturates, and a fresh container reproduces the whole
+curve, so it is deterministic rather than noise.
 
-This is not simply "dcp=8 is unstable": **standalone dcp=8 repeated fine**
-(1333 / 1395), and standalone dcp=8 has the *smaller* token pool of the two
-(63744 tokens vs PD decode's larger pool at mamba 1.03). So the trigger is
-specific to PD × dcp=8 — most likely state left behind on the decode node after
-the first run's KV transfers, since that is the one thing standalone has no
-equivalent of. `93_matrix.sh` now snapshots both server logs per run so the
-decode-side `#running` / `#queue` / token-usage series is available next time;
-the containers from this matrix were already gone when the pattern was spotted.
+| run (fresh containers) | 1 | 2 | 3 | 4 | 5 |
+|---|---|---|---|---|---|
+| 4-repeat matrix run | 1660 | 1038 | 962 | 878 | 876 (after 12 min idle) |
+| independent repeat | 1668 | 1009 | 934 | — | — |
 
-**Treat the dcp=8 rows as a first-run number with a known second-run cliff**, not
-as a steady state. It also plausibly explains the earlier unexplained 1598 vs
-2159 for what should have been the same config: that measurement likely landed in
-the degraded state.
+**The mechanism is DSPARK accept length collapsing, not queueing.** Aligning the
+decode log by decode step:
+
+| run | start | peak | tail plateau | steps for 1024 tok | accept rate |
+|---|---|---|---|---|---|
+| 1 | 2.08 | **5.15** | no decay; 5.5 → 7.0 | ~880 | ~0.5 |
+| 2 | 1.85 | 4.28 | 1.59 | ~1400 | ↓ |
+| 3 | 4.77 | 4.11 | 1.35–1.4 | ~1440 | 0.05 |
+| 4 | 5.69 | 4.11 | **1.07–1.2** | ~1640 | **0.01** |
+
+Same 1024 output tokens, but run 4 needs 1640 decode steps where run 1 needs 880
+— that ratio alone accounts for 1660 → 878. Median ITL is flat at 56–58 ms
+throughout, i.e. each step costs the same and there are simply more of them.
+Runs 3 and 4 even *start* higher (4.77, 5.69) before collapsing, so the server is
+not broken from the outset; it degrades within each run, earlier each time.
+
+What this rules out:
+
+- **not preemption or admission pressure** — `#retracted-req` and `#queue-req`
+  are 0 for every batch of every run, and mean/median TTFT do not worsen
+- **not radix-cache reuse** — `91_bench.sh` passes `--flush-cache` and the prefill
+  log shows 0 % hit and ~530 K new tokens every run, so prefill does identical work
+- **not the prompts** — the random dataset is seeded with `--random-range-ratio 1.0`
+- **not wrong output** — spot checks return correct text with
+  `finish_reason: length`; K3 is a reasoner, so most of a short budget goes to
+  `reasoning_content`
+- **not KV-pool or mamba-slot pressure** — at the *same* mamba usage 0.5, run 1
+  gets accept len 4.32 and run 5 only 3.32; the state is per-run-history, not
+  per-load
+- **not `mem-fraction-static`** — `balanced` and `high-throughput` differ only in
+  that knob and decay identically
+- **not dcp=8 by itself, and not DSPARK by itself** — standalone at dcp=8 with
+  DSPARK on reports a rock-steady accept length of **6.40** across all six runs
+  (6.39–6.41). Only the PD × DSPARK combination degrades.
+
+Reading the DSPARK implementation in the image eliminates two more candidates:
+`HostConfidenceBudgetPlanner`'s carry ring is generation-guarded (stale rows
+return `ones`, which is optimistic, so it cannot depress the budget), and the
+verify-budget scheduler is inert here — no `--speculative-dspark-sps-table-path`
+means `build_uninitialized_sps_table()`, and the server itself warns that the
+budget then "degenerates to verify-all (zero scheduling gain)".
+
+The remaining suspect is decode-side `--enable-linear-replayssm-spec` (on by
+default here, with `mamba_ssm_dtype=float32`). KDA's rollback path
+(`commit_kda_replayssm_after_verify` in `srt/speculative/spec_utils.py`) replays
+the accepted window into an fp32 `temporal` checkpoint on every commit, and in PD
+mode the KDA state starts from a cross-node KV transfer — the one ingredient
+standalone lacks. Slot reuse is not the issue: the ring cursors are zeroed on
+alloc (`mem_cache/memory_pool.py:1305-1312`). The working hypothesis is that the
+folded SSM checkpoint drifts from the target's true recurrent state, so the draft
+mispredicts progressively more.
+
+**Treat the dcp=8 rows as first-run numbers.** A restart fully recovers them, so
+the workaround is to restart decode between measurements, or to run
+`NO_SPEC=1`. It also explains the earlier unexplained 1598 vs 2159 for what
+should have been the same config: that measurement landed in the degraded state.
 
 **The profile names do not describe this workload point.** `low-latency` wins on
 throughput too — by 31 % over `balanced` even on balanced's *good* run — because
