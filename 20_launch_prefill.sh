@@ -38,8 +38,8 @@ docker run -d --name "$NAME" \
     "${CACHE_ARGS[@]}" \
     -v "$SCRIPT_DIR_HOST:/host/kimi-k3-aws:ro" \
     -e NO_SPEC="${NO_SPEC:-0}" \
-    -e MEM_FRACTION="${MEM_FRACTION:-0.85}" \
-    -e MAMBA_RATIO="${MAMBA_RATIO:-0.86}" \
+    -e MEM_FRACTION="${MEM_FRACTION:-$PREFILL_MEM_FRACTION}" \
+    -e MAMBA_RATIO="${MAMBA_RATIO:-$PREFILL_MAMBA_RATIO}" \
     -e DCP_SIZE="${DCP_SIZE:-$PREFILL_DCP_SIZE}" \
     -e TRANSFER_BACKEND="${TRANSFER_BACKEND:-mooncake}" \
     -e NCCL_DEBUG="${NCCL_DEBUG:-WARN}" \
@@ -48,4 +48,4 @@ docker run -d --name "$NAME" \
     "$IMAGE" \
     /host/kimi-k3-aws/start_prefill.sh
 
-echo "launched '$NAME'  ->  docker logs -f $NAME"
+echo "launched '$NAME' (profile=$PROFILE, mem=${MEM_FRACTION:-$PREFILL_MEM_FRACTION}, dcp=${DCP_SIZE:-$PREFILL_DCP_SIZE}, mamba=${MAMBA_RATIO:-$PREFILL_MAMBA_RATIO}, backend=${TRANSFER_BACKEND:-mooncake})  ->  docker logs -f $NAME"

@@ -80,6 +80,14 @@ IMAGE="${IMAGE:-kimi-k3-efa:latest}"
 # value for balanced/high-throughput as a workaround; override it to 1 to
 # reproduce the upstream config and the failure.
 #
+# PREFILL_MAMBA_RATIO must move with PREFILL_DCP_SIZE. It was previously
+# hardcoded to 0.86 in 20_launch_prefill.sh while dcp came from the profile, so
+# PROFILE=balanced silently launched prefill as dcp=8 + mamba=0.86 -- a pairing
+# no profile defines: dcp shards the KV cache but the state cache stays sized for
+# the unsharded case. That invalidated the first balanced/high-throughput
+# measurements. Prefill mirrors the decode ratio for the same reason it mirrors
+# dcp; mem-fraction stays 0.85 because only the decode node raises it to 0.92.
+#
 # Select with PROFILE=low-latency|balanced|high-throughput.
 PROFILE="${PROFILE:-low-latency}"
 case "$PROFILE" in
@@ -91,19 +99,24 @@ case "$PROFILE" in
         DECODE_DCP_SIZE=1; DECODE_CUSTOM_AR=off; DECODE_SYMM_MEM=on
         DECODE_MAMBA_RATIO=0.17; DECODE_MEM_FRACTION=0.85
         # PD prefill
-        PREFILL_DCP_SIZE=1 ;;
+        PREFILL_DCP_SIZE=1
+        PREFILL_MAMBA_RATIO=0.86; PREFILL_MEM_FRACTION=0.85 ;;
     balanced)
         STANDALONE_DCP_SIZE=8; STANDALONE_CUSTOM_AR=off
         STANDALONE_MAMBA_RATIO=5.13; STANDALONE_MEM_FRACTION=0.85
         DECODE_DCP_SIZE=8; DECODE_CUSTOM_AR=off; DECODE_SYMM_MEM=off
         DECODE_MAMBA_RATIO=1.03; DECODE_MEM_FRACTION=0.85
-        PREFILL_DCP_SIZE=8 ;;
+        PREFILL_DCP_SIZE=8
+        PREFILL_MAMBA_RATIO=1.03; PREFILL_MEM_FRACTION=0.85 ;;
     high-throughput)
         STANDALONE_DCP_SIZE=8; STANDALONE_CUSTOM_AR=off
         STANDALONE_MAMBA_RATIO=5.13; STANDALONE_MEM_FRACTION=0.92
         DECODE_DCP_SIZE=8; DECODE_CUSTOM_AR=off; DECODE_SYMM_MEM=off
         DECODE_MAMBA_RATIO=1.03; DECODE_MEM_FRACTION=0.92
-        PREFILL_DCP_SIZE=8 ;;
+        PREFILL_DCP_SIZE=8
+        # high-throughput raises mem-fraction on the decode node only; the
+        # prefill node still holds prefill activations, so it keeps 0.85.
+        PREFILL_MAMBA_RATIO=1.03; PREFILL_MEM_FRACTION=0.85 ;;
     *) echo "unknown PROFILE '$PROFILE' (low-latency|balanced|high-throughput)" >&2; exit 1 ;;
 esac
 

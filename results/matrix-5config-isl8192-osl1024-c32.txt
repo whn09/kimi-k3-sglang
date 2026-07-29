@@ -1,0 +1,200 @@
+matrix: isl=8192 osl=1024 n=64 conc=32 repeats=2 backend=mooncake
+configs: pd:low-latency pd:balanced pd:high-throughput standalone:low-latency standalone:balanced
+started: 2026-07-29T08:04:36Z
+
+########## mode=pd profile=low-latency  (2026-07-29T08:04:36Z) ##########
+fa8bb68bbe7f8a7ff0aef9ca94ea8f32db89789651c81b448a8b3069766e39f1
+launched 'kimi-k3-prefill' (profile=low-latency, mem=0.85, dcp=1, mamba=0.86, backend=mooncake)  ->  docker logs -f kimi-k3-prefill
+ef462cbebf266f47fc61c9d8681e58f4ac566596f5ff1be7ebb56443fe95d6a3
+launched 'kimi-k3-decode' (profile=low-latency, mem=0.85, dcp=1, mamba=0.17, symm=on)  ->  docker logs -f kimi-k3-decode
+  ready: prefill after 360s
+  ready: decode after 60s
+  verified kimi-k3-prefill dcp_size=1
+  verified kimi-k3-prefill mamba_full_memory_ratio=0.86
+  verified kimi-k3-prefill mem_fraction_static=0.85
+  verified kimi-k3-decode dcp_size=1
+  verified kimi-k3-decode mamba_full_memory_ratio=0.17
+  verified kimi-k3-decode mem_fraction_static=0.85
+  ready: router after 30s
+----- run 1/2  tag=pd-low-latency-mooncake-isl8192-osl1024-c32-r1 -----
+Successful requests:                     64        
+Benchmark duration (s):                  30.30     
+Request throughput (req/s):              2.11      
+Output token throughput (tok/s):         2162.72   
+Total token throughput (tok/s):          19464.51  
+Mean E2E Latency (ms):                   13398.96  
+Mean TTFT (ms):                          6121.92   
+Median TTFT (ms):                        5025.05   
+Mean TPOT (ms):                          7.11      
+Median TPOT (ms):                        6.74      
+Mean ITL (ms):                           45.35     
+Median ITL (ms):                         52.27     
+----- run 2/2  tag=pd-low-latency-mooncake-isl8192-osl1024-c32-r2 -----
+Successful requests:                     64        
+Benchmark duration (s):                  30.37     
+Request throughput (req/s):              2.11      
+Output token throughput (tok/s):         2158.08   
+Total token throughput (tok/s):          19422.69  
+Mean E2E Latency (ms):                   13319.33  
+Mean TTFT (ms):                          6091.32   
+Median TTFT (ms):                        5267.15   
+Mean TPOT (ms):                          7.07      
+Median TPOT (ms):                        6.91      
+Mean ITL (ms):                           45.04     
+Median ITL (ms):                         51.10     
+
+########## mode=pd profile=balanced  (2026-07-29T08:14:14Z) ##########
+f012a24f783469e141006938d4ff0fafa6a6bd6a169cffd5f75c8c83082f5d60
+launched 'kimi-k3-prefill' (profile=balanced, mem=0.85, dcp=8, mamba=1.03, backend=mooncake)  ->  docker logs -f kimi-k3-prefill
+4df56fe343b67ef935c72c2ec49e5e67e3fcd8fdb609f2c99d0eb223e9936ff6
+launched 'kimi-k3-decode' (profile=balanced, mem=0.85, dcp=8, mamba=1.03, symm=off)  ->  docker logs -f kimi-k3-decode
+  ready: prefill after 360s
+  ready: decode after 60s
+  verified kimi-k3-prefill dcp_size=8
+  verified kimi-k3-prefill mamba_full_memory_ratio=1.03
+  verified kimi-k3-prefill mem_fraction_static=0.85
+  verified kimi-k3-decode dcp_size=8
+  verified kimi-k3-decode mamba_full_memory_ratio=1.03
+  verified kimi-k3-decode mem_fraction_static=0.85
+  ready: router after 30s
+----- run 1/2  tag=pd-balanced-mooncake-isl8192-osl1024-c32-r1 -----
+Successful requests:                     64        
+Benchmark duration (s):                  39.74     
+Request throughput (req/s):              1.61      
+Output token throughput (tok/s):         1649.09   
+Total token throughput (tok/s):          14841.85  
+Mean E2E Latency (ms):                   17040.96  
+Mean TTFT (ms):                          5417.11   
+Median TTFT (ms):                        4163.67   
+Mean TPOT (ms):                          11.36     
+Median TPOT (ms):                        10.25     
+Mean ITL (ms):                           51.88     
+Median ITL (ms):                         57.97     
+----- run 2/2  tag=pd-balanced-mooncake-isl8192-osl1024-c32-r2 -----
+Successful requests:                     64        
+Benchmark duration (s):                  65.55     
+Request throughput (req/s):              0.98      
+Output token throughput (tok/s):         999.74    
+Total token throughput (tok/s):          8997.64   
+Mean E2E Latency (ms):                   24343.83  
+Mean TTFT (ms):                          4877.51   
+Median TTFT (ms):                        2727.26   
+Mean TPOT (ms):                          19.03     
+Median TPOT (ms):                        15.20     
+Mean ITL (ms):                           51.87     
+Median ITL (ms):                         57.62     
+
+########## mode=pd profile=high-throughput  (2026-07-29T08:24:39Z) ##########
+b5ade37e49a0c205774e01689473417a0265b8afaa21eaf9f073722a02e09f24
+launched 'kimi-k3-prefill' (profile=high-throughput, mem=0.85, dcp=8, mamba=1.03, backend=mooncake)  ->  docker logs -f kimi-k3-prefill
+94d7b048449436232c065e373c1b2be1996f7322735abacde33a7a0c91846ab1
+launched 'kimi-k3-decode' (profile=high-throughput, mem=0.92, dcp=8, mamba=1.03, symm=off)  ->  docker logs -f kimi-k3-decode
+  ready: prefill after 360s
+  ready: decode after 120s
+  verified kimi-k3-prefill dcp_size=8
+  verified kimi-k3-prefill mamba_full_memory_ratio=1.03
+  verified kimi-k3-prefill mem_fraction_static=0.85
+  verified kimi-k3-decode dcp_size=8
+  verified kimi-k3-decode mamba_full_memory_ratio=1.03
+  verified kimi-k3-decode mem_fraction_static=0.92
+  ready: router after 30s
+----- run 1/2  tag=pd-high-throughput-mooncake-isl8192-osl1024-c32-r1 -----
+Successful requests:                     64        
+Benchmark duration (s):                  39.11     
+Request throughput (req/s):              1.64      
+Output token throughput (tok/s):         1675.62   
+Total token throughput (tok/s):          15080.60  
+Mean E2E Latency (ms):                   16960.77  
+Mean TTFT (ms):                          5300.35   
+Median TTFT (ms):                        4408.12   
+Mean TPOT (ms):                          11.40     
+Median TPOT (ms):                        10.21     
+Mean ITL (ms):                           52.11     
+Median ITL (ms):                         57.99     
+----- run 2/2  tag=pd-high-throughput-mooncake-isl8192-osl1024-c32-r2 -----
+Successful requests:                     64        
+Benchmark duration (s):                  63.66     
+Request throughput (req/s):              1.01      
+Output token throughput (tok/s):         1029.50   
+Total token throughput (tok/s):          9265.47   
+Mean E2E Latency (ms):                   24318.65  
+Mean TTFT (ms):                          4831.08   
+Median TTFT (ms):                        2824.16   
+Mean TPOT (ms):                          19.05     
+Median TPOT (ms):                        15.78     
+Mean ITL (ms):                           52.06     
+Median ITL (ms):                         56.98     
+
+########## mode=standalone profile=low-latency  (2026-07-29T08:36:00Z) ##########
+8c03bad1819136911e96db708f53538d423272484f2c1a864592355c9dfc6b93
+launched 'kimi-k3' (profile=low-latency, dcp=1, mamba=0.86, mem=0.85)  ->  docker logs -f kimi-k3
+health: curl -s localhost:30000/health_generate
+  ready: standalone after 300s
+  verified kimi-k3 dcp_size=1
+  verified kimi-k3 mamba_full_memory_ratio=0.86
+  verified kimi-k3 mem_fraction_static=0.85
+----- run 1/2  tag=standalone-low-latency-isl8192-osl1024-c32-r1 -----
+Successful requests:                     64        
+Benchmark duration (s):                  45.47     
+Request throughput (req/s):              1.41      
+Output token throughput (tok/s):         1441.20   
+Total token throughput (tok/s):          12970.78  
+Mean E2E Latency (ms):                   21528.79  
+Mean TTFT (ms):                          4829.48   
+Median TTFT (ms):                        1943.27   
+Mean TPOT (ms):                          16.32     
+Median TPOT (ms):                        15.81     
+Mean ITL (ms):                           16.33     
+Median ITL (ms):                         7.63      
+----- run 2/2  tag=standalone-low-latency-isl8192-osl1024-c32-r2 -----
+Successful requests:                     64        
+Benchmark duration (s):                  43.50     
+Request throughput (req/s):              1.47      
+Output token throughput (tok/s):         1506.53   
+Total token throughput (tok/s):          13558.74  
+Mean E2E Latency (ms):                   20651.87  
+Mean TTFT (ms):                          3990.23   
+Median TTFT (ms):                        1912.28   
+Mean TPOT (ms):                          16.29     
+Median TPOT (ms):                        15.44     
+Mean ITL (ms):                           16.29     
+Median ITL (ms):                         7.61      
+
+########## mode=standalone profile=balanced  (2026-07-29T08:44:12Z) ##########
+3e0ea8c608641eae22fbe0db7bbd0158c22ac80cd9138560549c237c7428a8a2
+launched 'kimi-k3' (profile=balanced, dcp=8, mamba=5.13, mem=0.85)  ->  docker logs -f kimi-k3
+health: curl -s localhost:30000/health_generate
+  ready: standalone after 360s
+  verified kimi-k3 dcp_size=8
+  verified kimi-k3 mamba_full_memory_ratio=5.13
+  verified kimi-k3 mem_fraction_static=0.85
+----- run 1/2  tag=standalone-balanced-isl8192-osl1024-c32-r1 -----
+Successful requests:                     64        
+Benchmark duration (s):                  49.15     
+Request throughput (req/s):              1.30      
+Output token throughput (tok/s):         1333.34   
+Total token throughput (tok/s):          12000.04  
+Mean E2E Latency (ms):                   23069.88  
+Mean TTFT (ms):                          5150.55   
+Median TTFT (ms):                        2361.48   
+Mean TPOT (ms):                          17.52     
+Median TPOT (ms):                        16.62     
+Mean ITL (ms):                           17.52     
+Median ITL (ms):                         8.34      
+----- run 2/2  tag=standalone-balanced-isl8192-osl1024-c32-r2 -----
+Successful requests:                     64        
+Benchmark duration (s):                  46.97     
+Request throughput (req/s):              1.36      
+Output token throughput (tok/s):         1395.18   
+Total token throughput (tok/s):          12556.61  
+Mean E2E Latency (ms):                   22055.97  
+Mean TTFT (ms):                          4133.26   
+Median TTFT (ms):                        1957.14   
+Mean TPOT (ms):                          17.52     
+Median TPOT (ms):                        16.73     
+Mean ITL (ms):                           17.52     
+Median ITL (ms):                         8.24      
+
+finished: 2026-07-29T08:53:12Z
+raw logs: on the hosts under /home/ubuntu/kimi-k3-aws/results/ -- 'bash sync.sh pull' to fetch
+summary: ./results/matrix-isl8192-osl1024-c32.txt

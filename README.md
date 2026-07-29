@@ -39,6 +39,7 @@ Models live on `/opt/dlami/nvme` (27 TB); host python venv is `/opt/pytorch`.
 | `start_standalone.sh` / `start_prefill.sh` / `start_decode.sh` | container | the actual `sglang.launch_server` invocations |
 | `90_smoke_test.sh` / `91_bench.sh` | host | health + chat + streaming; `bench_serving` |
 | `92_sweep.sh` | host | concurrency sweep driver over `91_bench.sh` |
+| `93_matrix.sh` | laptop | profile-matrix driver: relaunch + verify + bench each config |
 | `sync.sh` | laptop | push scripts to both hosts, pull `results/` back |
 
 `PROFILE=low-latency|balanced|high-throughput` selects the upstream serving
@@ -73,7 +74,17 @@ ENDPOINT=localhost:8080 bash 90_smoke_test.sh
 # benchmark
 MODE=pd PROFILE=low-latency ENDPOINT=localhost:8080 bash 91_bench.sh
 MODE=pd PROFILE=low-latency ENDPOINT=localhost:8080 bash 92_sweep.sh
+
+# --- whole profile matrix, unattended (from the laptop) ---
+bash sync.sh push && bash 93_matrix.sh    # ~1 h: 5 configs x 2 runs
 ```
+
+`93_matrix.sh` relaunches every configuration from scratch so all rows share one
+container generation, and gates each on `/health` plus a read-back of `dcp_size`,
+`mamba_full_memory_ratio` and `mem_fraction_static` from the server's own
+`server_args` — a config mismatch skips the row instead of producing a
+plausible-looking number. It runs on the laptop because the two hosts have no ssh
+trust between them.
 
 The Dockerfile builds Mooncake from `whn09/Mooncake@fix/efa-gpu-mr-cuda-context`
 (upstream PR
@@ -98,62 +109,90 @@ SGLang auto-selects `trtllm_mla` for decode/verify, pins
 `--linear-attn-verify-backend nv_cutedsl` (fused Kimi-K3/DSPARK kernel), and
 defaults the draft to `trtllm_mha`. The MoE runs on `flashinfer_mxfp4`.
 
-### Results
+### Profile matrix
 
 ISL 8192 / OSL 1024, 64 prompts, concurrency 32, DSPARK on. PD runs go through
-the router and move KV over Mooncake/EFA; standalone is a single node, so the
-two standalone profiles were measured in parallel, one per host.
+the router and move KV over Mooncake/EFA. Every row below was produced by one
+unattended `93_matrix.sh` run — one container generation, one script revision,
+each config relaunched from scratch and its `dcp_size` /
+`mamba_full_memory_ratio` / `mem_fraction_static` read back out of `server_args`
+before benchmarking. All ten runs did identical work: 64/64 successful, 524288
+input tokens, 65536 generated, 0 errors. Both runs are shown because the spread
+turned out to be the most interesting result.
 
-| mode | profile | out tok/s | total tok/s | mean TTFT | median TTFT | mean TPOT | mean E2E |
-|---|---|---|---|---|---|---|---|
-| PD | low-latency (dcp 1/1, symm on, mamba 0.17) | **1598** | **14384** | 10.96 s | 11.48 s | **7.12 ms** | **18.25 s** |
-| PD | balanced (dcp 8/8, mamba 1.03) | 1354 | 13540 | 7.23 s | 6.66 s | 11.62 ms | 19.12 s |
-| PD | high-throughput (= balanced + decode mem 0.92) | 1436 | 12924 | 8.76 s | 9.40 s | 11.24 ms | 20.26 s |
-| standalone | low-latency (dcp 1, custom-AR on, mamba 0.86) | 1225 | 11026 | 7.87 s | 1.95 s | 16.91 ms | 25.17 s |
-| standalone | balanced (dcp 8, mamba 5.13) | 1274 | 11466 | **5.46 s** | **1.82 s** | 18.07 ms | 23.94 s |
+| mode | profile | out tok/s (r1 / r2) | total tok/s | mean TTFT | median TTFT | mean TPOT |
+|---|---|---|---|---|---|---|
+| PD | low-latency (dcp 1/1, symm on, mamba 0.17) | **2162.7 / 2158.1** | 19465 / 19423 | 6.12 / 6.09 s | 5.03 / 5.27 s | 7.11 / 7.07 ms |
+| PD | balanced (dcp 8/8, mamba 1.03) | 1649.1 / *999.7* | 14842 / 8998 | 5.42 / 4.88 s | 4.16 / 2.73 s | 11.36 / 19.03 ms |
+| PD | high-throughput (= balanced + decode mem 0.92) | 1675.6 / *1029.5* | 15081 / 9265 | 5.30 / 4.83 s | 4.41 / 2.82 s | 11.40 / 19.05 ms |
+| standalone | low-latency (dcp 1, custom-AR on, mamba 0.86) | 1441.2 / 1506.5 | 12971 / 13559 | 4.83 / 3.99 s | 1.94 / 1.91 s | 16.32 / 16.29 ms |
+| standalone | balanced (dcp 8, mamba 5.13) | 1333.3 / 1395.2 | 12000 / 12557 | 5.15 / 4.13 s | 2.36 / 1.96 s | 17.52 / 17.52 ms |
 
-64/64 requests succeeded in every run, 0 MR / KV-transfer / geometry errors.
-Measured from `kimi-k3-efa:latest` built from the fix branch, no bind-mounted
-`.so`. An earlier PD low-latency run on a hot-patched container gave 1683 tok/s /
-10.06 s TTFT — within run-to-run noise, i.e. the packaged fix behaves like the
-hot patch. Single runs, not averaged. **These five rows were taken across several
-container generations and the PD low-latency row later re-measured 35 % higher on
-a fresh one — see the caveat at the end of this section.**
+**PD low-latency is the best configuration here, and it is the only one that is
+reproducible to within noise.** 2162.7 / 2158.1 across these two runs, and
+2159 / 2164 in the backend A/B below — four runs inside 0.3 %. It beats the best
+standalone profile by 43 % on output throughput and 2.3× on TPOT: two nodes'
+worth of hardware, but more than the 2× decode-side FLOPs alone would give,
+because the decode node never interleaves prefill chunks into its batches.
 
-**PD beats standalone by 25–30 % on output throughput** (1598 vs 1274) and by
-~2.4× on TPOT (7.12 vs 16.91 ms) — two nodes' worth of hardware, but the win is
-larger than the 2× decode-side FLOPs alone would suggest, because the decode node
-never interleaves prefill chunks into its batches. Standalone wins on *median*
-TTFT (1.8–1.9 s vs 6.7–11.5 s): with no bootstrap handshake or KV transfer, the
-first few requests answer almost immediately, then the queue builds and the mean
-climbs past PD's. So the mean/median gap is a queueing artefact, not a
-transfer-cost signal — Mooncake/EFA's KV hop is not what makes PD's TTFT worse.
+**Both PD dcp=8 profiles lose ~39 % on their second run** (1649 → 1000,
+1676 → 1030) with identical token counts, unchanged median ITL (57.97 → 57.62 ms)
+and mean TPOT nearly doubled — requests were not generating more slowly, they
+were stalling. Mean/median TTFT actually *improved*, so it is not admission
+pressure at the front either. The two profiles differ only in decode
+`mem-fraction-static`, and they degrade by the same amount, which rules that knob
+out as the cause.
 
-**The profile names do not describe this workload point.** In PD, `balanced`
-buys a 34 % better TTFT (10.96 → 7.23 s) by paying 63 % on TPOT (7.12 →
-11.62 ms); at OSL 1024 the accumulated per-token cost dwarfs the one-off TTFT
-saving, so `low-latency` wins on throughput too, by 18 %. `high-throughput` only
-raises decode `mem-fraction-static` 0.85 → 0.92 and lands inside noise of
-`balanced` — at concurrency 32 decode is not KV-capacity-bound, so the extra
-memory buys nothing. Standalone `balanced` edges out `low-latency` on both TTFT
-and throughput, i.e. the two profiles are nearly interchangeable here despite
-`balanced`'s far smaller token pool (see below). Expect the ordering to move at
-higher concurrency or shorter OSL.
+This is not simply "dcp=8 is unstable": **standalone dcp=8 repeated fine**
+(1333 / 1395), and standalone dcp=8 has the *smaller* token pool of the two
+(63744 tokens vs PD decode's larger pool at mamba 1.03). So the trigger is
+specific to PD × dcp=8 — most likely state left behind on the decode node after
+the first run's KV transfers, since that is the one thing standalone has no
+equivalent of. `93_matrix.sh` now snapshots both server logs per run so the
+decode-side `#running` / `#queue` / token-usage series is available next time;
+the containers from this matrix were already gone when the pattern was spotted.
+
+**Treat the dcp=8 rows as a first-run number with a known second-run cliff**, not
+as a steady state. It also plausibly explains the earlier unexplained 1598 vs
+2159 for what should have been the same config: that measurement likely landed in
+the degraded state.
+
+**The profile names do not describe this workload point.** `low-latency` wins on
+throughput too — by 31 % over `balanced` even on balanced's *good* run — because
+at OSL 1024 the accumulated per-token cost (7.11 vs 11.36 ms TPOT) dwarfs
+balanced's one-off TTFT saving (6.12 → 5.42 s). `high-throughput` only raises
+decode `mem-fraction-static` 0.85 → 0.92 and lands within 1.6 % of `balanced`: at
+concurrency 32 decode is not KV-capacity-bound, so the extra memory buys nothing.
+Standalone's two profiles are likewise nearly interchangeable, with `low-latency`
+ahead by 8 %. Expect the ordering to move at higher concurrency or shorter OSL.
 
 **`mamba_full_memory_ratio` dominates the standalone token pool.** `balanced`'s
 ratio of 5.13 puts ~17 GB into the KDA state cache
 (`ssm_state size: 15.67 GB`, 309 slots), leaving
 `max_total_num_tokens=63744` — versus 475776 for `low-latency` at ratio 0.86.
 That is a 7.5× smaller pool, and at ISL 8192 × 32 concurrent the working set
-(~262 K tokens) exceeds it 4×, so `balanced` runs KV-bound and recomputes. It
-still measures slightly *faster* because its 309 state slots raise
-`max_running_requests` 35 → 48. The two effects roughly cancel at this point;
-they will not at longer ISL.
+(~262 K tokens) exceeds it 4×, so `balanced` runs KV-bound and recomputes. Its
+309 state slots do raise `max_running_requests` 35 → 48, which nearly cancels the
+loss; the cancellation will not hold at longer ISL.
+
+An earlier pass at this matrix was thrown out because of a launcher bug:
+`20_launch_prefill.sh` hardcoded `MAMBA_RATIO=0.86` while `DCP_SIZE` came from the
+profile, so `PROFILE=balanced` launched the prefill node as **dcp=8 with
+mamba=0.86** — a pairing no profile defines, where dcp shards the KV cache but the
+state cache stays sized for the unsharded case. `PREFILL_MAMBA_RATIO` and
+`PREFILL_MEM_FRACTION` are now profile-derived in `env_common.sh`; the launcher
+echoes its resolved config the way `21_launch_decode.sh` always did; and
+`93_matrix.sh` asserts the values against `server_args`, so the same class of
+mistake now aborts the row instead of publishing a number. For reference, fixing
+it moved PD balanced 1354 → 1649 tok/s.
 
 ### Mooncake vs NIXL: KV transfer is at parity, startup is not
 
-Same workload point, PD low-latency, two runs each, all four on the *same*
-container generation and cache state (this matters — see the caveat below):
+Same workload point, PD low-latency, two runs each, all four on one container
+generation. PD low-latency is the right config for a backend A/B precisely
+because it is the reproducible one: its four independent runs here and in the
+matrix above span 2158–2164 tok/s, so a real backend difference of more than
+~1 % would be visible.
 
 | backend | out tok/s | total tok/s | mean TTFT | median TTFT | mean TPOT | median ITL |
 |---|---|---|---|---|---|---|
@@ -183,18 +222,14 @@ concurrent registrations on a 192-core box, so the `duration=` each line reports
 is queueing delay, not registration time. That is the one place Mooncake is 30×
 behind NIXL on K3, and it is a startup cost only, not a serving cost.
 
+Fix in progress on `whn09/Mooncake@fix/efa-mr-reg-throttle`: bound the fan-out to
+a fixed pool (`MC_MAX_CONCURRENT_REG_MR`, default `nproc/4` clamped to [4, 32]),
+demote the 1456 per-chunk `LOG(WARNING)` lines to the existing trace gate, and log
+one batch total instead. The numbers above are from before that change; rebuild
+the image against that branch to re-measure the startup column.
+
 Measured against the PR #3177 branch as of image build 05:42 UTC, which predates
 that PR's last two (non-perf) commits.
-
-> **Caveat: the two tables above are not comparable to each other.** The
-> five-profile matrix was taken on an earlier container generation, where this
-> same PD low-latency config measured 1598 tok/s / 10.96 s TTFT — versus 2159 and
-> 6.04 s here, a 35 % throughput and 45 % TTFT shift with identical server args.
-> The cache mounts added in between should not affect steady-state serving, so the
-> cause is unexplained; these hosts also carry other workloads. Treat the profile
-> matrix's *ordering* as provisional and re-run it on one container generation
-> before drawing conclusions from it. The backend A/B is unaffected: all four of
-> its runs share one generation.
 
 ## Notes and pitfalls
 
