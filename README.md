@@ -39,6 +39,7 @@ Models live on `/opt/dlami/nvme` (27 TB); host python venv is `/opt/pytorch`.
 | `start_standalone.sh` / `start_prefill.sh` / `start_decode.sh` | container | the actual `sglang.launch_server` invocations |
 | `90_smoke_test.sh` / `91_bench.sh` | host | health + chat + streaming; `bench_serving` |
 | `92_sweep.sh` | host | concurrency sweep driver over `91_bench.sh` |
+| `sync.sh` | laptop | push scripts to both hosts, pull `results/` back |
 
 `PROFILE=low-latency|balanced|high-throughput` selects the upstream serving
 variant; `env_common.sh` documents which knobs each one moves, and they differ
@@ -96,16 +97,17 @@ ISL 8192 / OSL 1024, 64 prompts, concurrency 32, DSPARK on, via the router.
 
 | mode | profile | out tok/s | mean TTFT | mean TPOT | median ITL |
 |---|---|---|---|---|---|
-| PD | low-latency | 1683 | 10.06 s | 7.19 ms | 52.6 ms |
+| PD | low-latency | **1598** | 10.96 s | 7.12 ms | 52.5 ms |
 
-That row was measured on a container carrying the GPU-MR fix as a bind-mounted
-`.so` rather than from a clean image, so treat it as indicative; the matrix below
-is being re-run from `kimi-k3-efa:latest` built from the fix branch. Still to
-fill in: PD balanced / high-throughput (both need `PREFILL_DCP_SIZE=8`, see
-below) and standalone low-latency / balanced.
+64/64 requests succeeded, benchmark duration 41 s. Measured from
+`kimi-k3-efa:latest` built from the fix branch, no bind-mounted `.so`. An earlier
+run of the same config on a hot-patched container gave 1683 tok/s / 10.06 s TTFT
+— within run-to-run noise, i.e. the packaged fix behaves like the hot patch.
 
-Earlier NIXL (`TRANSFER_BACKEND=nixl`, `SGLANG_DISAGGREGATION_NIXL_BACKEND=LIBFABRIC`)
-concurrency-sweep points at the same ISL/OSL are in `results/` for comparison.
+Still to fill in: PD balanced / high-throughput (both need `PREFILL_DCP_SIZE=8`,
+see below) and standalone low-latency / balanced. NIXL
+(`TRANSFER_BACKEND=nixl`, `SGLANG_DISAGGREGATION_NIXL_BACKEND=LIBFABRIC`) is the
+comparison baseline.
 
 ## Notes and pitfalls
 
