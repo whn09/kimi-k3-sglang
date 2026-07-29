@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ---- kimi-k3-sglang ----
+# Benchmark output from 91_bench.sh / 92_sweep.sh: large and
+# machine-specific. Curated numbers live in README.md.
+results/*.log
+results/*.json
