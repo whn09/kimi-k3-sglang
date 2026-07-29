@@ -116,7 +116,9 @@ two standalone profiles were measured in parallel, one per host.
 Measured from `kimi-k3-efa:latest` built from the fix branch, no bind-mounted
 `.so`. An earlier PD low-latency run on a hot-patched container gave 1683 tok/s /
 10.06 s TTFT — within run-to-run noise, i.e. the packaged fix behaves like the
-hot patch. Single runs, not averaged.
+hot patch. Single runs, not averaged. **These five rows were taken across several
+container generations and the PD low-latency row later re-measured 35 % higher on
+a fresh one — see the caveat at the end of this section.**
 
 **PD beats standalone by 25–30 % on output throughput** (1598 vs 1274) and by
 ~2.4× on TPOT (7.12 vs 16.91 ms) — two nodes' worth of hardware, but the win is
@@ -148,9 +150,51 @@ still measures slightly *faster* because its 309 state slots raise
 `max_running_requests` 35 → 48. The two effects roughly cancel at this point;
 they will not at longer ISL.
 
-NIXL (`TRANSFER_BACKEND=nixl`,
-`SGLANG_DISAGGREGATION_NIXL_BACKEND=LIBFABRIC`) is the comparison baseline and is
-still to be measured.
+### Mooncake vs NIXL: KV transfer is at parity, startup is not
+
+Same workload point, PD low-latency, two runs each, all four on the *same*
+container generation and cache state (this matters — see the caveat below):
+
+| backend | out tok/s | total tok/s | mean TTFT | median TTFT | mean TPOT | median ITL |
+|---|---|---|---|---|---|---|
+| Mooncake/EFA | 2159 / **2164** | 19428 / **19472** | 6.04 / 6.09 s | 5.05 / 5.31 s | 7.09 / 7.07 ms | 52.3 / 51.1 ms |
+| NIXL/LIBFABRIC | 2101 / 2141 | 18912 / 18912 | 6.26 / 6.07 s | 5.21 / 5.21 s | 6.99 / 7.10 ms | 51.0 / 51.0 ms |
+
+**No meaningful difference in serving performance.** Mooncake is nominally 1–3 %
+ahead, but run-to-run spread within each backend is 2–3 %, so the two are
+indistinguishable here; TTFT, TPOT and ITL all overlap. 64/64 in every run, 0
+errors. NIXL genuinely used EFA — both sides log
+`Backend LIBFABRIC was instantiated`, not a TCP fallback. Verify that before
+trusting any NIXL number.
+
+**Mooncake costs ~2 extra minutes of startup, though.** Measured from the end of
+FlashInfer autotune to the server accepting connections — the phase where the
+only remaining work is KV-cache memory registration:
+
+| backend | autotune done → Uvicorn ready |
+|---|---|
+| Mooncake/EFA | 07:40:44 → 07:42:50 = **125 s** |
+| NIXL/LIBFABRIC | 07:29:32 → 07:29:36 = **4 s** |
+
+Those 125 s are 1456 `fi_mr_reg` calls (the `efa_transport.cpp:483` log lines
+bracket the window exactly), fanned out through an unbounded
+`std::async(std::launch::async)` in `registerLocalMemoryBatch` — peak 1104
+concurrent registrations on a 192-core box, so the `duration=` each line reports
+is queueing delay, not registration time. That is the one place Mooncake is 30×
+behind NIXL on K3, and it is a startup cost only, not a serving cost.
+
+Measured against the PR #3177 branch as of image build 05:42 UTC, which predates
+that PR's last two (non-perf) commits.
+
+> **Caveat: the two tables above are not comparable to each other.** The
+> five-profile matrix was taken on an earlier container generation, where this
+> same PD low-latency config measured 1598 tok/s / 10.96 s TTFT — versus 2159 and
+> 6.04 s here, a 35 % throughput and 45 % TTFT shift with identical server args.
+> The cache mounts added in between should not affect steady-state serving, so the
+> cause is unexplained; these hosts also carry other workloads. Treat the profile
+> matrix's *ordering* as provisional and re-run it on one container generation
+> before drawing conclusions from it. The backend A/B is unaffected: all four of
+> its runs share one generation.
 
 ## Notes and pitfalls
 
