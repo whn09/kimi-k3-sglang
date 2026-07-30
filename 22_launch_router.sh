@@ -25,7 +25,7 @@ echo "decode  : http://${DECODE_IP}:${PORT}"
 docker run -d --name "$NAME" \
     --net=host \
     -v "$HOST_MODEL_DIR/Kimi-K3:/models/Kimi-K3:ro" \
-    -v "$SCRIPT_DIR_HOST:/host/kimi-k3-aws:ro" \
+    -v "$SCRIPT_DIR_HOST:/host/kimi-k3-sglang:ro" \
     --entrypoint python3 \
     "$IMAGE" \
     -m sglang_router.launch_router \

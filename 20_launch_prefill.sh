@@ -36,7 +36,7 @@ docker run -d --name "$NAME" \
     -v "$HOST_MODEL_DIR/Kimi-K3:/models/Kimi-K3:ro" \
     -v "$HOST_MODEL_DIR/Kimi-K3-DSpark:/models/Kimi-K3-DSpark:ro" \
     "${CACHE_ARGS[@]}" \
-    -v "$SCRIPT_DIR_HOST:/host/kimi-k3-aws:ro" \
+    -v "$SCRIPT_DIR_HOST:/host/kimi-k3-sglang:ro" \
     -e NO_SPEC="${NO_SPEC:-0}" \
     -e MEM_FRACTION="${MEM_FRACTION:-$PREFILL_MEM_FRACTION}" \
     -e MAMBA_RATIO="${MAMBA_RATIO:-$PREFILL_MAMBA_RATIO}" \
@@ -46,6 +46,6 @@ docker run -d --name "$NAME" \
     -e TP_SIZE="$TP_SIZE" -e PORT="$PORT" -e BOOTSTRAP_PORT="$BOOTSTRAP_PORT" \
     --entrypoint bash \
     "$IMAGE" \
-    /host/kimi-k3-aws/start_prefill.sh
+    /host/kimi-k3-sglang/start_prefill.sh
 
 echo "launched '$NAME' (profile=$PROFILE, mem=${MEM_FRACTION:-$PREFILL_MEM_FRACTION}, dcp=${DCP_SIZE:-$PREFILL_DCP_SIZE}, mamba=${MAMBA_RATIO:-$PREFILL_MAMBA_RATIO}, backend=${TRANSFER_BACKEND:-mooncake})  ->  docker logs -f $NAME"

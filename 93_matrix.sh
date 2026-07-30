@@ -25,7 +25,7 @@ source ./env_common.sh
 
 PREFILL_HOST="${PREFILL_HOST:-P6-B300-1}"   # also the standalone + router host
 DECODE_HOST="${DECODE_HOST:-P6-B300-2}"
-REMOTE="${REMOTE:-/home/ubuntu/kimi-k3-aws}"
+REMOTE="${REMOTE:-/home/ubuntu/kimi-k3-sglang}"
 
 REPEATS="${REPEATS:-2}"
 ISL="${ISL:-8192}"

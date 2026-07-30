@@ -28,7 +28,7 @@ docker run -d --name "$NAME" \
     -v "$HOST_MODEL_DIR/Kimi-K3:/models/Kimi-K3:ro" \
     -v "$HOST_MODEL_DIR/Kimi-K3-DSpark:/models/Kimi-K3-DSpark:ro" \
     "${CACHE_ARGS[@]}" \
-    -v "$SCRIPT_DIR_HOST:/host/kimi-k3-aws:ro" \
+    -v "$SCRIPT_DIR_HOST:/host/kimi-k3-sglang:ro" \
     -e NO_SPEC="${NO_SPEC:-0}" \
     -e MEM_FRACTION="${MEM_FRACTION:-$STANDALONE_MEM_FRACTION}" \
     -e MAMBA_RATIO="${MAMBA_RATIO:-$STANDALONE_MAMBA_RATIO}" \
@@ -39,7 +39,7 @@ docker run -d --name "$NAME" \
     -e PORT="$PORT" \
     --entrypoint bash \
     "$IMAGE" \
-    /host/kimi-k3-aws/start_standalone.sh
+    /host/kimi-k3-sglang/start_standalone.sh
 
 echo "launched '$NAME' (profile=$PROFILE, dcp=$STANDALONE_DCP_SIZE, mamba=$STANDALONE_MAMBA_RATIO, mem=$STANDALONE_MEM_FRACTION)  ->  docker logs -f $NAME"
 echo "health: curl -s localhost:${PORT}/health_generate"

@@ -13,7 +13,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 HOSTS="${HOSTS:-P6-B300-1 P6-B300-2}"
-REMOTE="${REMOTE:-/home/ubuntu/kimi-k3-aws}"
+REMOTE="${REMOTE:-/home/ubuntu/kimi-k3-sglang}"
 
 push() {
     for h in $HOSTS; do

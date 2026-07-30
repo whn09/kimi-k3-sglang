@@ -6,7 +6,7 @@
 NVME="${NVME:-/opt/dlami/nvme}"
 HOST_MODEL_DIR="${HOST_MODEL_DIR:-$NVME/models}"
 HOST_CACHE_DIR="${HOST_CACHE_DIR:-$NVME/cache}"
-SCRIPT_DIR_HOST="${SCRIPT_DIR_HOST:-/home/ubuntu/kimi-k3-aws}"
+SCRIPT_DIR_HOST="${SCRIPT_DIR_HOST:-/home/ubuntu/kimi-k3-sglang}"
 
 # ---- JIT / autotune caches to persist on the host ----
 # Every launch otherwise recompiles from scratch: on a cold container 100% of the

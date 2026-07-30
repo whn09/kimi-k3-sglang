@@ -10,7 +10,7 @@
 # bring-up so a draft-model problem cannot be confused with a base-model one.
 set -euo pipefail
 
-source /host/kimi-k3-aws/env_common.sh
+source /host/kimi-k3-sglang/env_common.sh
 setup_runtime_env
 
 SPEC_ARGS=()
