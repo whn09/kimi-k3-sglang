@@ -56,9 +56,16 @@ balanced / high-throughput profiles (see the DCP note below).
 ## Quick start
 
 ```bash
-# once per machine (~1.5 TB, and ~8 min to build the image)
+# once per machine (~1.5 TB, and ~2 min to build the image on a warm base)
 bash 00_download_models.sh
-docker build -t kimi-k3-efa:latest -f Dockerfile .
+docker build -t kimi-k3-efa-v2:latest -f Dockerfile .
+
+# ...or pull it prebuilt instead of building (us-west-2, same region as the B300s)
+ECR=579019700964.dkr.ecr.us-west-2.amazonaws.com/kimi-k3-sglang-b300
+aws ecr get-login-password --region us-west-2 \
+  | docker login --username AWS --password-stdin "${ECR%%/*}"
+docker pull $ECR:deepep-v2-20260902-07c8f729
+docker tag  $ECR:deepep-v2-20260902-07c8f729 kimi-k3-efa-v2:latest
 
 # --- single node (on P6-B300-1) ---
 NO_SPEC=1 bash 10_launch_standalone.sh   # first bring-up: base model only
@@ -79,6 +86,16 @@ MODE=pd PROFILE=low-latency ENDPOINT=localhost:8080 bash 92_sweep.sh
 bash sync.sh push && bash 93_matrix.sh    # ~1 h: 5 configs x 2 runs
 ```
 
+The ECR tag names the base sglang commit (`07c8f729`) and the build date, and the
+pull retags it to `kimi-k3-efa-v2:latest` because that is what `env_common.sh`
+defaults `IMAGE` to. **Pull the dated tag, not `:latest`** — `:latest` moves, so a
+run recorded against it cannot be reproduced later. `deepep-v2-20260902-07c8f729`
+was built and verified on a p5.4xlarge: mooncake resolves to exactly one
+distribution (`mooncake-transfer-engine-efa-cuda13` 0.3.13.post1) whose
+`engine.so` links libfabric, all five K3 patches applied cleanly, and `deep_ep` is
+importable. It has **not** been run on a B300 yet — the image is verified, the
+model is not.
+
 `93_matrix.sh` relaunches every configuration from scratch so all rows share one
 container generation, and gates each on `/health` plus a read-back of `dcp_size`,
 `mamba_full_memory_ratio` and `mem_fraction_static` from the server's own
@@ -86,12 +103,78 @@ container generation, and gates each on `/health` plus a read-back of `dcp_size`
 plausible-looking number. It runs on the laptop because the two hosts have no ssh
 trust between them.
 
-The Dockerfile builds Mooncake from `whn09/Mooncake@fix/efa-mr-reg-throttle`,
-which is the GPU-MR CUDA-context fix (upstream PR
-[#3177](https://github.com/kvcache-ai/Mooncake/pull/3177)) plus the bounded
-registration fan-out described [below](#bounding-the-fan-out-1387-s--207-s-on-the-dominant-batch)
-— override with `--build-arg MOONCAKE_REPO=... --build-arg MOONCAKE_REF=...` once
-those land upstream.
+The Dockerfile installs Mooncake from the published
+`mooncake-transfer-engine-efa-cuda13` wheel, which is prebuilt `USE_EFA=ON` +
+`USE_CUDA=ON` against CUDA 13 and now contains both fixes this repo used to build
+a fork for: the GPU-MR CUDA-context fix (upstream PR
+[#3177](https://github.com/kvcache-ai/Mooncake/pull/3177)) and the bounded
+registration fan-out described [below](#bounding-the-fan-out-1387-s--207-s-on-the-dominant-batch).
+Override with `--build-arg MOONCAKE_PKG=...`.
+
+### DeepEP v2
+
+K3's MoE runs on `--moe-a2a-backend deepep_v2` + `--moe-runner-backend deep_gemm`,
+with **EP inside one node** (`ep_size == tp_size == 8`, `--deepep-v2-mode direct`).
+In a PD run the only thing crossing the wire is the Mooncake KV transfer;
+cross-node EP is out of scope for these scripts. The image bakes in five source
+patches without which v2 either refuses K3 by name or — worse, in the case of
+`kimi_k3.py` — **serves wrong numerics silently**, so `require_efa_image` refuses
+to launch on an image that cannot prove they are present. Root cause per patch is
+in [`patches/README.md`](patches/README.md).
+
+The one knob that matters is `SGLANG_DEEPEP_V2_NUM_MAX_DISPATCH_TOKENS_PER_RANK`,
+called `CAP` here. It is an **env var, not a flag**, so it never appears in
+`docker inspect .Args`; the launchers echo it explicitly for that reason. One
+capacity has to satisfy two unrelated constraints, and it also sizes two
+allocations competing for the same ~39 GB:
+
+| | wants CAP | cost of a bigger CAP |
+|---|---|---|
+| prefill chunk (`chunk/dp_size <= CAP`) | large | — |
+| decode graph (`graph_bs*tokens_per_req <= CAP`) | small | — |
+| ElasticBuffer | — | 10.5 GiB per 1024 of CAP |
+| decode graph capture pool | — | 18.48 GB @1024, 33.43 GiB @2048 |
+
+**PD disaggregation is what dissolves that conflict**: prefill and decode are
+separate processes, so each gets its own value of an env var and each takes the
+end of the trade it actually wants. Hence two caps in `env_common.sh`:
+
+| | CAP | chunk | decode CUDA graphs |
+|---|---|---|---|
+| `PREFILL_*` | 2048 | 2048 | **off** — frees the whole capture pool |
+| `DECODE_*` | 1024 | 1024 | on |
+| `STANDALONE_*` (unified baseline) | 1024 | 1024 | on |
+
+Prefill gives up graphs it would never use and buys twice the chunk (prefill is
+near-linear in chunk: 512 → 2048 was 3.94x). Decode keeps graphs, which are worth
+3.27x end-to-end and an ITL p50 of 43.54 ms against 255.24 ms — the 255 ms was
+kernel-launch overhead, not the a2a. Break-even between the two is ~52 output
+tokens.
+
+Two things to know before changing these:
+
+- **`PREFILL_CAP=2048` is untested on the PD prefill node.** 2048 is the measured
+  graphs-off ceiling (3072 asks a 31.50 GiB ElasticBuffer and OOMs), but that was
+  a unified server with no draft model and no `--enable-symm-mem`, both of which
+  the PD prefill node has. If it OOMs after "Load weight", drop to 1024.
+- **Speculative decoding is what makes a small `DECODE_CAP` illegal.** With spec
+  off `tokens_per_req` is 1 and the decode constraint is invisible; with DSPARK
+  block 7 each request carries ~8 tokens per step, so the largest captured batch
+  must be ≤ CAP/8. The "smaller CAP is faster" experiment (on DSV4/B300, 2048 →
+  256 was −16% step / +18% tok/s, untested on K3) therefore needs
+  `DECODE_CAP=256 DECODE_CGMAXBS=32`. Both `start_*.sh` pre-check this and fail in
+  a second rather than after a 10-minute weight load.
+
+`MOE_A2A_BACKEND=none` restores the old plain-TP `flashinfer_mxfp4` path as a
+baseline, and puts the chunk back to 16384 so the comparison is not rigged.
+
+Which NCCL GIN backend DeepEP v2 uses is auto-detected (`detect_gin`), because
+sgl-deep-ep aborts on a `NONE` gin type even for a single-node `direct` run:
+type **5** (EFA_GDA) on an EFA box, type **3** (GDAKI) plus a one-plane
+`NCCL_IB_HCA` pin on the InfiniBand-only B300. Type 5 on p6-b300 is **unverified**
+— it is confirmed on p5en's gen-2 EFA, not on this generation's factory stack, so
+it is the first thing to suspect if startup aborts on the GIN assert
+(`NCCL_DEBUG_SUBSYS=GIN` prints which backend was selected).
 
 Startup takes ~11 min: ~6 min to load 1.5 TB of weights, then FlashInfer
 autotune + CUDA graph capture. **GPU utilisation reads 0% for almost all of
@@ -109,7 +192,10 @@ Single node TP=8, `mem-fraction-static 0.85`, `mamba-full-memory-ratio 0.86`:
 
 SGLang auto-selects `trtllm_mla` for decode/verify, pins
 `--linear-attn-verify-backend nv_cutedsl` (fused Kimi-K3/DSPARK kernel), and
-defaults the draft to `trtllm_mha`. The MoE runs on `flashinfer_mxfp4`.
+defaults the draft to `trtllm_mha`. The MoE ran on `flashinfer_mxfp4` when these
+numbers were taken; it now runs on DeepEP v2 + `deep_gemm` by default (above), so
+treat this section as the plain-TP baseline — reproduce it with
+`MOE_A2A_BACKEND=none`.
 
 ### Profile matrix
 

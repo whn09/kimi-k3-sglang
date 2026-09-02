@@ -24,7 +24,25 @@ NAME="${NAME:-kimi-k3-bench}"
 # Raw-log capture. TAG identifies the experiment; MODE is standalone|pd.
 RESULTS_DIR="${RESULTS_DIR:-$SCRIPT_DIR_HOST/results}"
 MODE="${MODE:-standalone}"
-TAG="${TAG:-${MODE}-${PROFILE}-isl${ISL}-osl${OSL}-c${CONCURRENCY}}"
+
+# The EP axis has to be IN THE FILENAME. Without it a deepep_v2 run and a
+# plain-TP run at the same profile/ISL/OSL/concurrency write the same .log and
+# .json, and the second silently deletes the first -- and under PD the two sides
+# have DIFFERENT caps, so "cap" is two numbers, not one. CAP comes from the
+# container's env rather than from this script's variables because it is an env
+# var: it never appears in the server's `server_args=` line, so nothing else in
+# this harness can see it.
+#
+# The stamp is empty when EP is off, so existing plain-TP filenames are unchanged.
+EPTAG=""
+if [[ "${MOE_A2A_BACKEND:-none}" != "none" ]]; then
+    if [[ "$MODE" == "pd" ]]; then
+        EPTAG="-${MOE_A2A_BACKEND}-p$(read_cap kimi-k3-prefill)d$(read_cap kimi-k3-decode)"
+    else
+        EPTAG="-${MOE_A2A_BACKEND}-cap$(read_cap kimi-k3)"
+    fi
+fi
+TAG="${TAG:-${MODE}-${PROFILE}${EPTAG}-isl${ISL}-osl${OSL}-c${CONCURRENCY}}"
 mkdir -p "$RESULTS_DIR"
 LOG="$RESULTS_DIR/${TAG}.log"
 JSON="$RESULTS_DIR/${TAG}.json"
@@ -36,6 +54,14 @@ echo "log  : ${LOG}"
   echo "### tag=${TAG}"
   echo "### mode=${MODE} profile=${PROFILE} endpoint=${ENDPOINT}"
   echo "### isl=${ISL} osl=${OSL} num_prompts=${NUM_PROMPTS} concurrency=${CONCURRENCY}"
+  # Recorded even when EP is off, so a log can never be ambiguous about which
+  # MoE path produced it. "unknown" means the container was not reachable from
+  # here (e.g. benching a remote endpoint) -- treat such a row as unlabelled.
+  if [[ "$MODE" == "pd" ]]; then
+      echo "### a2a=${MOE_A2A_BACKEND} ep=${EP_SIZE} cap_prefill=$(read_cap kimi-k3-prefill) cap_decode=$(read_cap kimi-k3-decode)"
+  else
+      echo "### a2a=${MOE_A2A_BACKEND} ep=${EP_SIZE} cap=$(read_cap kimi-k3)"
+  fi
   echo "### started=$(date -u +%FT%TZ)"
 } > "$LOG"
 

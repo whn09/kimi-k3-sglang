@@ -182,27 +182,51 @@ READY in 220 s, real `/v1/chat/completions` returns coherent text. Two traps:
 
 ## Reproducing
 
-`../run_k3_v2.sh {unified|prefill|decode}` (ports 30000/30001/30002) bind-mounts
-the three patched files read-only over the image. To rebuild the patched copies
-on a fresh host:
+**These five diffs are now applied inside the image** — see the "DeepEP v2 source
+patches" step in `../Dockerfile`, which `patch`es each one by target path and
+*fails the build* if a diff neither applies nor is already present. So the normal
+way to reproduce is:
+
+```bash
+docker build -t kimi-k3-efa-v2:latest -f ../Dockerfile ..
+bash ../10_launch_standalone.sh          # or 20_/21_ for 1P1D
+```
+
+That replaced the older flow, in which `../run_k3_v2.sh {unified|prefill|decode}`
+bind-mounted patched whole-file copies from `/opt/dlami/nvme/patch` over the
+image. `run_k3_v2.sh` still works and is still the fastest way to iterate on a
+diff on a live host, but it only ever worked on the one host that had that
+directory — a second machine silently got the **unpatched** behaviour, which for
+`kimi_k3.diff` means wrong numerics rather than an error. `require_efa_image()`
+in `../env_common.sh` now refuses to launch on an image that cannot prove the
+patches are in it.
+
+To re-cut a diff against a new base image:
 
 ```bash
 P=/opt/dlami/nvme/patch; mkdir -p $P/orig
 cid=$(docker create --entrypoint true lmsysorg/sglang:nightly-dev-cu13-20260901-07c8f729)
-B=/sgl-workspace/sglang/python/sglang/srt
-docker cp $cid:$B/models/kimi_k3.py                    $P/orig/kimi_k3.py
-docker cp $cid:$B/arg_groups/moe_hook.py               $P/orig/moe_hook.py
-docker cp $cid:$B/layers/moe/fused_moe_triton/layer.py $P/orig/fmt_layer.py
+B=/sgl-workspace/sglang/python/sglang
+docker cp $cid:$B/srt/models/kimi_k3.py                    $P/orig/kimi_k3.py
+docker cp $cid:$B/srt/arg_groups/moe_hook.py               $P/orig/moe_hook.py
+docker cp $cid:$B/srt/layers/moe/fused_moe_triton/layer.py $P/orig/fmt_layer.py
+docker cp $cid:$B/srt/layers/moe/moe_runner/deep_gemm.py   $P/orig/mr_deep_gemm.py
+docker cp $cid:$B/kernels/ops/moe/ep_moe_kernels.py        $P/orig/ep_moe_kernels.py
 docker rm -f $cid
-for f in kimi_k3 moe_hook fmt_layer; do
+for f in kimi_k3 moe_hook fmt_layer mr_deep_gemm ep_moe_kernels; do
   cp $P/orig/$f.py $P/$f.py
   patch $P/$f.py < patches/$f.diff
 done
 ```
 
-`CAP=4096 CHUNK=4096` are required: `validate_deepep_v2_dispatch_token_budget`
-(`moe_hook.py:381`) rejects the default capacity 128 against a 16384-token
-prefill budget.
+`validate_deepep_v2_dispatch_token_budget` (`moe_hook.py:381`) rejects the
+upstream default capacity of 128 against any real prefill budget, so a CAP has to
+be set. **It is not 4096** — an earlier version of this file said `CAP=4096
+CHUNK=4096` were "required", and that config cannot start: the ElasticBuffer costs
+10.5 GiB per 1024 of CAP, so 4096 asks 42.00 GiB of the ~39 GB available and OOMs
+(3072 asks 31.50 GiB and also OOMs). The measured ceilings are **2048 with CUDA
+graphs off** and **1024 with them on**; `../env_common.sh` sets prefill and decode
+separately for exactly this reason.
 
 ## Status (2026-09-01, updated)
 

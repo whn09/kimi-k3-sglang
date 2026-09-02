@@ -38,7 +38,16 @@ CONFIGS="${CONFIGS:-pd:low-latency pd:balanced pd:high-throughput standalone:low
 
 LOCAL_RESULTS="${LOCAL_RESULTS:-./results}"
 mkdir -p "$LOCAL_RESULTS"
-SUMMARY="$LOCAL_RESULTS/matrix-isl${ISL}-osl${OSL}-c${CONCURRENCY}.txt"
+# Same reason the per-run tag below carries the EP axis: a deepep_v2 matrix and a
+# plain-TP matrix at the same isl/osl/concurrency would otherwise write the same
+# summary, and this file is truncated at start (`: > "$SUMMARY"`), so the second
+# sweep deletes the first sweep's summary outright. All three caps go in because
+# one summary spans both pd and standalone rows. Empty when EP is off.
+MTAG=""
+if [[ "${MOE_A2A_BACKEND:-none}" != "none" ]]; then
+    MTAG="-${MOE_A2A_BACKEND}-p${PREFILL_CAP}d${DECODE_CAP}s${STANDALONE_CAP}"
+fi
+SUMMARY="$LOCAL_RESULTS/matrix-isl${ISL}-osl${OSL}-c${CONCURRENCY}${MTAG}.txt"
 
 say() { echo "$@" | tee -a "$SUMMARY"; }
 : > "$SUMMARY"
@@ -89,10 +98,39 @@ assert_arg() {
     say "  verified $name $key=$want"
 }
 
+# assert_arg's blind spot: CAP is passed as an ENV VAR, so it is absent from the
+# server's `server_args=` line and assert_arg would report it as <absent> forever.
+# A row could therefore run at the wrong capacity -- the single knob that decides
+# whether the ElasticBuffer and the graph pool both fit -- and still be recorded
+# as verified. Read it from the container instead.
+assert_cap() {
+    local host="$1" name="$2" want="$3" got
+    got=$(ssh "$host" "docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' $name 2>/dev/null \
+        | grep '^SGLANG_DEEPEP_V2_NUM_MAX_DISPATCH_TOKENS_PER_RANK=' | head -1 | cut -d= -f2" 2>/dev/null)
+    got="${got//[[:space:]]/}"
+    if [[ "$got" != "$want" ]]; then
+        say "  CONFIG MISMATCH $name: want CAP=$want, container reports '${got:-<absent>}'"
+        return 1
+    fi
+    say "  verified $name CAP=$want"
+}
+
 run_bench() {
     local host="$1" endpoint="$2" mode="$3" profile="$4" r="$5"
     local tag="${mode}-${profile}"
     [[ "$mode" == "pd" ]] && tag="${tag}-${BACKEND}"
+    # The EP axis belongs in the filename. This tag is passed to 91_bench.sh as
+    # TAG=, which overrides the stamp 91_bench.sh would build for itself, so
+    # without this a deepep_v2 matrix and a plain-TP matrix at the same profile
+    # overwrite each other row for row -- including the .prefill.log/.decode.log
+    # snapshots below. Empty when EP is off, so existing filenames are unchanged.
+    if [[ "${w_a2a:-none}" != "none" ]]; then
+        if [[ "$mode" == "pd" ]]; then
+            tag="${tag}-${w_a2a}-p${w_pcap}d${w_dcap}"
+        else
+            tag="${tag}-${w_a2a}-cap${w_scap}"
+        fi
+    fi
     tag="${tag}-isl${ISL}-osl${OSL}-c${CONCURRENCY}-r${r}"
     say "----- run $r/$REPEATS  tag=$tag -----"
     ssh "$host" "cd $REMOTE && ISL=$ISL OSL=$OSL NUM_PROMPTS=$NUM_PROMPTS \
@@ -136,7 +174,8 @@ for cfg in $CONFIGS; do
     eval "$(PROFILE=$profile bash -c 'source ./env_common.sh >/dev/null 2>&1
         echo "w_pdcp=$PREFILL_DCP_SIZE w_pmamba=$PREFILL_MAMBA_RATIO w_pmem=$PREFILL_MEM_FRACTION"
         echo "w_ddcp=$DECODE_DCP_SIZE w_dmamba=$DECODE_MAMBA_RATIO w_dmem=$DECODE_MEM_FRACTION"
-        echo "w_sdcp=$STANDALONE_DCP_SIZE w_smamba=$STANDALONE_MAMBA_RATIO w_smem=$STANDALONE_MEM_FRACTION"')"
+        echo "w_sdcp=$STANDALONE_DCP_SIZE w_smamba=$STANDALONE_MAMBA_RATIO w_smem=$STANDALONE_MEM_FRACTION"
+        echo "w_a2a=$MOE_A2A_BACKEND w_pcap=$PREFILL_CAP w_dcap=$DECODE_CAP w_scap=$STANDALONE_CAP"')"
 
     if [[ "$mode" == "pd" ]]; then
         # Launch both nodes before waiting on either: they rendezvous over the
@@ -152,6 +191,12 @@ for cfg in $CONFIGS; do
         assert_arg "$DECODE_HOST"  kimi-k3-decode  dcp_size "$w_ddcp" || continue
         assert_arg "$DECODE_HOST"  kimi-k3-decode  mamba_full_memory_ratio "$w_dmamba" || continue
         assert_arg "$DECODE_HOST"  kimi-k3-decode  mem_fraction_static "$w_dmem" || continue
+        if [[ "$w_a2a" != "none" ]]; then
+            # The two sides run DIFFERENT caps on purpose -- that is the point of
+            # doing DeepEP v2 under PD -- so both get checked, separately.
+            assert_cap "$PREFILL_HOST" kimi-k3-prefill "$w_pcap" || continue
+            assert_cap "$DECODE_HOST"  kimi-k3-decode  "$w_dcap" || continue
+        fi
 
         # The router is the easiest thing to forget: without it the bench still
         # "runs" and reports 0 successful requests. Gate on its /health.
@@ -165,6 +210,7 @@ for cfg in $CONFIGS; do
         assert_arg "$PREFILL_HOST" kimi-k3 dcp_size "$w_sdcp" || continue
         assert_arg "$PREFILL_HOST" kimi-k3 mamba_full_memory_ratio "$w_smamba" || continue
         assert_arg "$PREFILL_HOST" kimi-k3 mem_fraction_static "$w_smem" || continue
+        [[ "$w_a2a" == "none" ]] || assert_cap "$PREFILL_HOST" kimi-k3 "$w_scap" || continue
         bench_host="$PREFILL_HOST"; endpoint="localhost:$PORT"
     fi
 

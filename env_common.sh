@@ -64,9 +64,18 @@ build_gdr_args() {
 MODEL_PATH="${MODEL_PATH:-/models/Kimi-K3}"
 DRAFT_MODEL_PATH="${DRAFT_MODEL_PATH:-/models/Kimi-K3-DSpark}"
 
-# Locally built image (see Dockerfile): kimi-k3 base + EFA + gdrcopy + Mooncake
-# built -DUSE_EFA=ON. Required for PD disaggregation; harmless for standalone.
-IMAGE="${IMAGE:-kimi-k3-efa:latest}"
+# Locally built image (see Dockerfile): sglang nightly + EFA + gdrcopy + the
+# EFA/CUDA13 Mooncake wheel + the five DeepEP v2 patches. Required for PD
+# disaggregation; harmless for standalone.
+#
+# The TAG CHANGED from kimi-k3-efa:latest deliberately. The old tag was built on
+# lmsysorg/sglang:kimi-k3, which predates the v2 dispatcher and carries none of
+# the patches -- and an unpatched image does not fail, it serves WRONG NUMERICS
+# (see the kimi_k3.py note in the Dockerfile). Reusing the tag would have made
+# that indistinguishable from a good run, so a stale image now fails to be found
+# instead. require_efa_image() re-checks the patches at launch for the same
+# reason.
+IMAGE="${IMAGE:-kimi-k3-efa-v2:latest}"
 
 # ---- serving profile ----
 # The SGLang cookbook page for this model
@@ -144,6 +153,141 @@ TP_SIZE="${TP_SIZE:-8}"
 SERVED_MODEL_NAME="${SERVED_MODEL_NAME:-moonshotai/Kimi-K3}"
 PORT="${PORT:-30000}"
 
+# ---- DeepEP v2 expert parallelism ----
+# K3's MoE on `--moe-a2a-backend deepep_v2` + `--moe-runner-backend deep_gemm`.
+# Set MOE_A2A_BACKEND=none to get the old plain-TP flashinfer_mxfp4 path back as
+# a baseline; everything else in this block is then ignored.
+#
+# EP IS INTRA-NODE. ep_size == tp_size == 8 and `--deepep-v2-mode direct` keep
+# the a2a inside one box, so in a PD run the ONLY thing crossing the wire is the
+# Mooncake KV transfer. Cross-node EP (ep_size 16 over two nodes) needs more than
+# these scripts change and is deliberately out of scope.
+MOE_A2A_BACKEND="${MOE_A2A_BACKEND:-deepep_v2}"
+EP_SIZE="${EP_SIZE:-$TP_SIZE}"
+DEEPEP_V2_MODE="${DEEPEP_V2_MODE:-direct}"
+MOE_RUNNER_BACKEND="${MOE_RUNNER_BACKEND:-deep_gemm}"
+
+# CAP = SGLANG_DEEPEP_V2_NUM_MAX_DISPATCH_TOKENS_PER_RANK (environ.py:1085,
+# upstream default 128). It is an ENV VAR, not a flag, so it never shows up in
+# `docker inspect .Args` -- the launchers echo it explicitly for that reason.
+#
+# It is v2's per-rank dispatch buffer capacity in tokens, and in a UNIFIED server
+# one number has to satisfy two unrelated constraints at once
+# (validate_deepep_v2_dispatch_token_budget, moe_hook.py:375-410):
+#     prefill:      chunked_prefill_size / dp_size   <= CAP   -> wants it LARGE
+#     decode graph: graph_bs * tokens_per_req        <= CAP   -> wants it SMALL
+# and CAP also sizes two allocations that compete for the same ~39 GB:
+#     ElasticBuffer      10.5 GiB per 1024 of CAP
+#     decode graph pool  18.48 GB at CAP=1024, 33.43 GiB at CAP=2048
+# In a unified server that forces CAP=1024 with graphs on, and the big prefill
+# chunk is simply unaffordable.
+#
+# *** PD DISAGGREGATION IS WHY THIS FILE HAS TWO CAPS. *** Prefill and decode are
+# separate processes, so they get separate values of an env var, and each side can
+# take the end of the trade it actually wants. That is not a compromise -- it is
+# strictly better than either unified setting.
+#
+# PREFILL: no decode graphs at all, so the whole capture pool becomes headroom
+# and CAP can go up. 2048 is the measured graphs-off ceiling (CAP=3072 asks a
+# 31.50 GiB ElasticBuffer and OOMs; 4096 asks 42.00 GiB). Prefill is near-linear
+# in chunk: 512 -> 2048 was 3.94x.
+#   CAVEAT, and it is a real one: 2048 was measured on a UNIFIED server with no
+#   draft model and no --enable-symm-mem. The PD prefill node loads Kimi-K3-DSpark
+#   and enables symm-mem, so it has less headroom and CAP=2048 is UNTESTED there.
+#   If it OOMs after "Load weight", drop to 1024 -- that costs prefill throughput,
+#   not correctness.
+PREFILL_CAP="${PREFILL_CAP:-2048}"
+# CHUNK must satisfy CHUNK/dp_size <= CAP, and dp_size is 1 here, so CHUNK==CAP.
+# Note this is a big cut from the pre-DeepEP default of 16384: that is the price
+# of the v2 dispatcher, not a tuning mistake -- so the plain-TP baseline keeps the
+# old 16384 rather than being handicapped into a flattering comparison.
+if [[ "$MOE_A2A_BACKEND" == "none" ]]; then
+    PREFILL_CHUNK="${PREFILL_CHUNK:-16384}"
+else
+    PREFILL_CHUNK="${PREFILL_CHUNK:-$PREFILL_CAP}"
+fi
+
+# DECODE: graphs ON -- they are worth far more than the chunk they cost (measured
+# 8K/1K conc 16: 3.27x end-to-end, ITL p50 43.54 vs 255.24 ms; break-even is ~52
+# output tokens). 1024 is the largest CAP that still fits alongside the capture
+# pool (18.48 + 10.5 <= 38.99 GB), so it is the default.
+#
+# Smaller may be FASTER, not just smaller: on DSV4/B300 dropping the decode
+# capacity 2048 -> 256 was -16% step time / +18% tok/s, because the fixed-capacity
+# a2a moves less. Untested on K3. To try it, see DECODE_CGMAXBS below -- 256 is
+# NOT reachable at the default graph batch sizes with speculative decoding on.
+DECODE_CAP="${DECODE_CAP:-1024}"
+# Decode still needs a chunked-prefill size that passes the same boot check, even
+# though it does no real prefill. Whether that check is gated on
+# --disaggregation-mode is unverified; pinning it to CAP makes the question moot.
+DECODE_CHUNK="${DECODE_CHUNK:-$DECODE_CAP}"
+# Caps the captured decode batch-size list (--cuda-graph-max-bs-decode; the old
+# --cuda-graph-max-bs is a deprecated alias). It does NOT save memory -- the
+# capture pool is sized by CAP, not by how many shapes are captured (measured:
+# CAP=2048 with bs=[8,16,24] still took 33.43 GiB and OOMed, while CAP=1024 with
+# all 13 shapes took 18.48 GB and started). What it does is (a) cut the ~62 s
+# capture, and (b) satisfy `graph_bs * tokens_per_req <= CAP`, which is what makes
+# a small DECODE_CAP legal. Empty = sglang's default list.
+# Keep it ABOVE the achievable decode batch or large batches silently fall out of
+# the graph and back to a ~255 ms step.
+DECODE_CGMAXBS="${DECODE_CGMAXBS:-}"
+
+# STANDALONE (unified server) is the arm that has to satisfy BOTH constraints
+# with one number, so it gets the compromise: 1024 with graphs on. That is not a
+# tuning preference, it is the ceiling -- 18.48 GB of capture + a 10.5 GiB
+# ElasticBuffer just fits the 38.99 GB available, and 1536 would need
+# ~27.7 + 15.75 = 43 GB. Keep it here as the PD-vs-unified baseline; the point of
+# the PD split above is that neither side has to accept this.
+STANDALONE_CAP="${STANDALONE_CAP:-1024}"
+if [[ "$MOE_A2A_BACKEND" == "none" ]]; then
+    STANDALONE_CHUNK="${STANDALONE_CHUNK:-16384}"
+else
+    STANDALONE_CHUNK="${STANDALONE_CHUNK:-$STANDALONE_CAP}"
+fi
+
+# ---- NCCL GIN backend (DeepEP v2's transport) ----
+# sgl-deep-ep asserts ginType != NONE even for a single-node `direct` run
+# (csrc/kernels/backend/nccl.cu:87), so a GIN backend must initialize even though
+# nothing crosses the wire. Without --device=/dev/infiniband NCCL sees no network
+# at all and reports NONE.
+#
+# The two boxes this repo has run on need DIFFERENT types, and picking wrong is
+# a startup abort, so detect rather than hardcode:
+#   5 = EFA_GDA   p6-b300 on AWS with EFA (the 16 efa rails)
+#   3 = GDAKI     InfiniBand/DOCA only -- this is what the earlier B300-KR box
+#                 used, where there was no EFA device at all, just 2x
+#                 ConnectX-7 (MT2910, link_layer InfiniBand). There the two HCAs
+#                 sat on two IB planes with NO path between them (ibv_rc_pingpong
+#                 across them failed with "transport retry counter exceeded"),
+#                 which is why NCCL_IB_HCA has to pin exactly one.
+# GIN_TYPE=5 on p6-b300 is UNVERIFIED -- EFA GDA is confirmed on p5en (gen-2 EFA)
+# but not on this generation's factory stack. If DeepEP v2 aborts at startup on
+# the GIN assert, that is the first thing to look at, and NCCL_DEBUG_SUBSYS=GIN
+# prints which backend was actually selected.
+detect_gin() {
+    if [[ -n "${GIN_TYPE:-}" ]]; then
+        echo "$GIN_TYPE"; return
+    fi
+    if [[ -d /sys/class/infiniband ]] && \
+       ls /sys/class/infiniband 2>/dev/null | grep -q '^rdmap\|^efa'; then
+        echo 5
+    elif [[ -d /sys/class/infiniband ]] && \
+         ls /sys/class/infiniband 2>/dev/null | grep -q '^ibp\|^mlx'; then
+        echo 3
+    else
+        # No RDMA device visible at all. DeepEP v2 will abort on the GIN assert,
+        # so say why now instead of letting it look like a v2 bug. Note the host
+        # is what matters here: inside a container this also fires when
+        # --device=/dev/infiniband was forgotten.
+        echo "WARN: no EFA or IB device under /sys/class/infiniband -- DeepEP v2" >&2
+        echo "      will abort on the ginType != NONE assert. Guessing type 5." >&2
+        echo "      Override with GIN_TYPE=, or MOE_A2A_BACKEND=none to skip EP." >&2
+        echo 5
+    fi
+}
+# Only meaningful for GIN type 3; harmless otherwise.
+IB_HCA="${IB_HCA:-ibp198s0f0}"
+
 # ---- cluster ----
 # Primary ENA interface (the other 16 enpXX are EFA-only rails).
 PRIMARY_IFACE="${PRIMARY_IFACE:-enp71s0}"
@@ -174,6 +318,18 @@ setup_runtime_env() {
     # Mooncake KV transfer over EFA (PD disagg only; harmless otherwise).
     export MOONCAKE_PROTOCOL="${MOONCAKE_PROTOCOL:-efa}"
 
+    # Bounds Mooncake's MR-registration thread fan-out. K3 registers 1376
+    # buffers, and unbounded this was 138.7 s of startup at a 138-thread peak.
+    # FEWER threads is faster, because registration serializes on the EFA
+    # provider's per-domain lock: 128 -> 130.1 s, 32 -> 51.0 s, 8 -> 20.7 s,
+    # 4 -> 24.8 s. Re-sweep on a different instance type; the optimum tracks
+    # core count / ranks, not a universal constant.
+    export MC_MAX_CONCURRENT_REG_MR="${MC_MAX_CONCURRENT_REG_MR:-8}"
+
+    # DeepEP v2's ElasticBuffer is allocated LAST, after weights + KV pool +
+    # graph capture, so it is the allocation that meets a fragmented heap.
+    export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+
     # NIXL alternative to Mooncake (TRANSFER_BACKEND=nixl). The image ships
     # libplugin_LIBFABRIC.so, which is the EFA-capable NIXL backend; SGLang
     # selects it via this env (srt/disaggregation/nixl/conn.py:420).
@@ -185,6 +341,23 @@ setup_runtime_env() {
     export SGLANG_LOAD_TIMEOUT="${SGLANG_LOAD_TIMEOUT:-7200}"
 }
 
+# Echo the CAP a RUNNING container was actually given, or "unknown".
+#
+# This has to come from .Config.Env, not from the profile variables above and not
+# from the server's own `server_args=` line: CAP is an env var, not a flag, so it
+# is absent from server_args entirely -- which is exactly why 93_matrix.sh's
+# assert_arg() cannot check it and needs assert_env() instead. Reading the
+# container is the only way to learn what the server really got rather than what
+# a script meant to pass.
+read_cap() {
+    local name="$1" v
+    v=$(docker inspect -f \
+        '{{range .Config.Env}}{{println .}}{{end}}' "$name" 2>/dev/null \
+        | grep '^SGLANG_DEEPEP_V2_NUM_MAX_DISPATCH_TOKENS_PER_RANK=' \
+        | head -1 | cut -d= -f2)
+    echo "${v:-unknown}"
+}
+
 # Assert the image actually has an EFA-capable Mooncake before a 10-minute load.
 # The upstream lmsysorg/sglang:kimi-k3 image ships a pip mooncake wheel built
 # WITHOUT EFA, which does not fail at startup: it passes SGLang's PD warmup and
@@ -194,7 +367,7 @@ require_efa_image() {
     local img="$1"
     if ! docker image inspect "$img" >/dev/null 2>&1; then
         echo "ERROR: image '$img' not found. Build it first:" >&2
-        echo "  docker build -t kimi-k3-efa:latest -f Dockerfile ." >&2
+        echo "  docker build -t kimi-k3-efa-v2:latest -f Dockerfile ." >&2
         exit 1
     fi
     if ! docker run --rm --entrypoint bash "$img" -c \
@@ -210,7 +383,51 @@ require_efa_image() {
         'MC=$(python3 -c "import mooncake,os;print(os.path.dirname(mooncake.__file__))");
          strings "$MC"/engine.cpython-*.so | grep -q bindCudaContextIfNeeded' 2>/dev/null; then
         echo "ERROR: mooncake in '$img' lacks the GPU-MR CUDA-context fix." >&2
-        echo "       Rebuild from Dockerfile (MOONCAKE_REF=fix/efa-gpu-mr-cuda-context)." >&2
+        echo "       Rebuild from Dockerfile with a current" >&2
+        echo "       mooncake-transfer-engine-efa-cuda13 wheel." >&2
         exit 1
     fi
+
+    # Same class of trap, and the worst one: an image WITHOUT the kimi_k3.py
+    # patch runs deepep_v2 happily and returns wrong logits, because the MoE
+    # region keeps its DP-gather / TP-reduce on top of the a2a the v2 dispatcher
+    # already did. There is no error to notice. So refuse to launch on an image
+    # that cannot prove the patch is in it. Skipped when EP is off, since the
+    # patches are only reachable through the v2 path.
+    if [[ "${MOE_A2A_BACKEND:-deepep_v2}" == "deepep_v2" ]]; then
+        if ! docker run --rm --entrypoint bash "$img" -c \
+            'SGL=$(python3 -c "import sglang,os;print(os.path.dirname(sglang.__file__))");
+             grep -q KimiK3ForConditionalGeneration "$SGL/srt/arg_groups/moe_hook.py" &&
+             grep -q is_deepep_v2 "$SGL/srt/models/kimi_k3.py"' 2>/dev/null; then
+            echo "ERROR: '$img' is missing the DeepEP v2 patches for K3." >&2
+            echo "       This image would SERVE WRONG NUMERICS, not fail." >&2
+            echo "       Rebuild: docker build -t kimi-k3-efa-v2:latest -f Dockerfile ." >&2
+            echo "       (or set MOE_A2A_BACKEND=none to run the plain-TP baseline)" >&2
+            exit 1
+        fi
+    fi
+}
+
+# Fills DEEPEP_ENVS with the docker -e flags DeepEP v2 needs in the CONTAINER
+# environment. $1 = the CAP for THIS side; prefill and decode pass different
+# values, which is the whole point of doing this under PD (see the CAP block).
+# Comes back empty when MOE_A2A_BACKEND=none.
+#
+# Only the env side lives here. The server FLAGS are assembled in the start_*.sh
+# scripts alongside every other flag group, from the plain vars forwarded with -e.
+build_deepep_envs() {
+    local cap="$1"
+    DEEPEP_ENVS=()
+    if [[ "$MOE_A2A_BACKEND" == "none" ]]; then
+        return
+    fi
+    local gin; gin="$(detect_gin)"
+    DEEPEP_ENVS=(
+        -e SGLANG_DEEPEP_V2_NUM_MAX_DISPATCH_TOKENS_PER_RANK="$cap"
+        -e NCCL_GIN_TYPE="$gin"
+    )
+    # NCCL_IB_HCA is a one-plane pin for the IB-only box and must NOT be set on
+    # an EFA box, where it would hide 15 of the 16 rails from NCCL.
+    [[ "$gin" == "3" ]] && DEEPEP_ENVS+=(-e NCCL_IB_HCA="$IB_HCA")
+    echo "DeepEP v2: ep=$EP_SIZE mode=$DEEPEP_V2_MODE runner=$MOE_RUNNER_BACKEND cap=$cap gin=$gin" >&2
 }

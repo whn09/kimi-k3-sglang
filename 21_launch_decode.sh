@@ -14,6 +14,9 @@ NAME="${NAME:-kimi-k3-decode}"
 # (~1-2 min). Persisting it on the host makes restarts reuse the .so.
 build_cache_args "/tmp/symm_allocator=symm_allocator"
 build_gdr_args
+# Decode's OWN capacity -- smaller than prefill's, because this side spends the
+# memory on CUDA graph capture instead. See the CAP block in env_common.sh.
+build_deepep_envs "${CAP:-$DECODE_CAP}"
 
 # Unmapping ~1.5 TB of model volumes can outlast a single `rm -f`, leaving the
 # container Exited-but-present and the next `docker run` failing with "container
@@ -50,9 +53,19 @@ docker run -d --name "$NAME" \
     -e DECODE_EXTRA_SLOTS="${DECODE_EXTRA_SLOTS:-16}" \
     -e TRANSFER_BACKEND="${TRANSFER_BACKEND:-mooncake}" \
     -e NCCL_DEBUG="${NCCL_DEBUG:-WARN}" \
+    -e MOE_A2A_BACKEND="$MOE_A2A_BACKEND" \
+    -e EP_SIZE="$EP_SIZE" \
+    -e DEEPEP_V2_MODE="$DEEPEP_V2_MODE" \
+    -e MOE_RUNNER_BACKEND="$MOE_RUNNER_BACKEND" \
+    -e CHUNKED_PREFILL="${CHUNK:-$DECODE_CHUNK}" \
+    -e CGMAXBS="${CGMAXBS:-$DECODE_CGMAXBS}" \
+    -e SPEC_BLOCK_SIZE="${SPEC_BLOCK_SIZE:-7}" \
+    ${DEEPEP_ENVS[@]+"${DEEPEP_ENVS[@]}"} \
     -e TP_SIZE="$TP_SIZE" -e PORT="$PORT" \
     --entrypoint bash \
     "$IMAGE" \
     /host/kimi-k3-sglang/start_decode.sh
 
 echo "launched '$NAME' (profile=$PROFILE, mem=${MEM_FRACTION:-$DECODE_MEM_FRACTION}, dcp=${DCP_SIZE:-$DECODE_DCP_SIZE}, mamba=${MAMBA_RATIO:-$DECODE_MAMBA_RATIO}, symm=${SYMM_MEM:-$DECODE_SYMM_MEM})  ->  docker logs -f $NAME"
+# CAP is an env var, not a flag, so it is invisible in `docker inspect .Args`.
+echo "  a2a=$MOE_A2A_BACKEND ep=$EP_SIZE cap=${CAP:-$DECODE_CAP} chunk=${CHUNK:-$DECODE_CHUNK} decode-graphs=ON max-bs=${CGMAXBS:-${DECODE_CGMAXBS:-<sglang default>}}"

@@ -11,6 +11,9 @@ source ./env_common.sh
 NAME="${NAME:-kimi-k3-prefill}"
 build_cache_args
 build_gdr_args
+# Prefill's OWN capacity -- larger than decode's, which is the whole reason to
+# run PD with DeepEP v2. See the CAP block in env_common.sh.
+build_deepep_envs "${CAP:-$PREFILL_CAP}"
 
 # Unmapping ~1.5 TB of model volumes can outlast a single `rm -f`, leaving the
 # container Exited-but-present and the next `docker run` failing with "container
@@ -44,9 +47,19 @@ docker run -d --name "$NAME" \
     -e DCP_SIZE="${DCP_SIZE:-$PREFILL_DCP_SIZE}" \
     -e TRANSFER_BACKEND="${TRANSFER_BACKEND:-mooncake}" \
     -e NCCL_DEBUG="${NCCL_DEBUG:-WARN}" \
+    -e MOE_A2A_BACKEND="$MOE_A2A_BACKEND" \
+    -e EP_SIZE="$EP_SIZE" \
+    -e DEEPEP_V2_MODE="$DEEPEP_V2_MODE" \
+    -e MOE_RUNNER_BACKEND="$MOE_RUNNER_BACKEND" \
+    -e CHUNKED_PREFILL="${CHUNK:-$PREFILL_CHUNK}" \
+    -e PREFILL_CUDA_GRAPH="${PREFILL_CUDA_GRAPH:-0}" \
+    ${DEEPEP_ENVS[@]+"${DEEPEP_ENVS[@]}"} \
     -e TP_SIZE="$TP_SIZE" -e PORT="$PORT" -e BOOTSTRAP_PORT="$BOOTSTRAP_PORT" \
     --entrypoint bash \
     "$IMAGE" \
     /host/kimi-k3-sglang/start_prefill.sh
 
 echo "launched '$NAME' (profile=$PROFILE, mem=${MEM_FRACTION:-$PREFILL_MEM_FRACTION}, dcp=${DCP_SIZE:-$PREFILL_DCP_SIZE}, mamba=${MAMBA_RATIO:-$PREFILL_MAMBA_RATIO}, backend=${TRANSFER_BACKEND:-mooncake})  ->  docker logs -f $NAME"
+# CAP is an env var, not a flag, so it is invisible in `docker inspect .Args`.
+# Print it here or a run's most important axis goes unrecorded.
+echo "  a2a=$MOE_A2A_BACKEND ep=$EP_SIZE cap=${CAP:-$PREFILL_CAP} chunk=${CHUNK:-$PREFILL_CHUNK} decode-graphs=$([ "${PREFILL_CUDA_GRAPH:-0}" = 1 ] && echo on || echo OFF)"

@@ -222,3 +222,7 @@ __marimo__/
 # machine-specific. Curated numbers live in README.md.
 results/*.log
 results/*.json
+
+# macOS Finder metadata -- never useful in a repo, and it turns up in every
+# directory the laptop has browsed.
+.DS_Store

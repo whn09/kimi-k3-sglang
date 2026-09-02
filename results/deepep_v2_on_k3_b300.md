@@ -204,10 +204,33 @@ real answer wins. Keep `DISCG=1 CAP=2048` only for a prefill-only measurement
    (`environ.py:1085`, upstream default **128**) is checked against two unrelated
    requirements: `CHUNK / dp_size <= CAP` wants 2048, and
    `graph_bs * tokens_per_req <= CAP` wants only 104. Raising CAP to buy prefill
-   chunk inflates the decode graph's workspace by the same factor. **These two needs
-   should not share one capacity — worth an upstream issue.** Note CAP is an env var,
-   not a flag, so it is invisible in `docker inspect .Args`; `bench_k3.sh` reads it
-   from `.Config.Env` into every log header for this reason.
+   chunk inflates the decode graph's workspace by the same factor. Note CAP is an env
+   var, not a flag, so it is invisible in `docker inspect .Args`; `bench_k3.sh` reads
+   it from `.Config.Env` into every log header for this reason.
+
+   **This is a unified-server problem only, and PD disaggregation is the fix** —
+   not an upstream change (decided 2026-09-02, so no issue was filed). Because the
+   capacity is an env var, a prefill server and a decode server are two processes with
+   two independent values, and each side's measured optimum is the other's worst case:
+   prefill wants it large (chunk 512 -> 2048 is 3.94x, §3) and needs **no** decode
+   graphs at all, which frees the entire 33.43 GiB capture pool for the ElasticBuffer;
+   decode wants it small (CAP 2048 -> 256 is −16% step time on b300, see
+   `project_dsv4_deepep_v2_decode_b300`). Splitting improves both sides rather than
+   trading between them. Three things to carry into that config:
+
+   - **Lower `--chunked-prefill-size` on the decode instance too.** The
+     `CHUNK/dp_size <= CAP` check may well not be gated on `--disaggregation-mode`
+     (unverified), in which case a decode instance at CAP=256 fails to boot on its
+     inherited default chunk. Harmless either way, so just do it.
+   - **PD still does not reach CHUNK=8192 on K3.** With the capture pool freed the
+     prefill instance has ~39.63 GB for the ElasticBuffer at 10.5 GiB/1024, i.e. a
+     ceiling near CAP=3072 (untested). CAP=4096 (42.00 GiB) failed measured and needs
+     a contiguous block. Do not extrapolate capture memory downward either: 1024 ->
+     18.48 GB and 2048 -> 33.43 GiB is a ratio of 1.81, not 2.
+   - **PD needs >= 2 nodes for K3.** Weights are already 214.88 GB of 267.68 GiB per
+     GPU at TP8; splitting one node into two 4-GPU instances roughly doubles per-GPU
+     weights and cannot fit. Combined with §5 (the PD ports have never reached READY
+     here), treat all of the above as design, not measurement.
 
 **Methodology warning: `nvidia-smi utilization.gpu` inverted the conclusion here.**
 It *fell* (30-49% -> 25-38%) while throughput rose 6.2x. It only reports whether a
