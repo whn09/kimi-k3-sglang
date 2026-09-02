@@ -60,9 +60,17 @@ balanced / high-throughput profiles (see the DCP note below).
 bash 00_download_models.sh
 docker build -t kimi-k3-efa-v2:latest -f Dockerfile .
 
-# ...or pull it prebuilt instead of building (us-west-2, same region as the B300s)
-ECR=579019700964.dkr.ecr.us-west-2.amazonaws.com/kimi-k3-sglang-b300
-aws ecr get-login-password --region us-west-2 \
+# ...or pull it prebuilt instead of building. Published in BOTH regions p6-b300
+# has actually been obtainable in -- pick the one this host is in, because a
+# cross-region pull of 14.9 GB is slower and bills egress:
+#   ap-northeast-2  (where the spot grabber hunts, AZ ap-northeast-2c)
+#   us-west-2       (where the capacity-block/on-demand attempts have run)
+REGION=$(curl -s -H "X-aws-ec2-metadata-token: $(curl -sX PUT \
+  http://169.254.169.254/latest/api/token \
+  -H 'X-aws-ec2-metadata-token-ttl-seconds: 60')" \
+  http://169.254.169.254/latest/meta-data/placement/region)
+ECR=579019700964.dkr.ecr.$REGION.amazonaws.com/kimi-k3-sglang-b300
+aws ecr get-login-password --region $REGION \
   | docker login --username AWS --password-stdin "${ECR%%/*}"
 docker pull $ECR:deepep-v2-20260902-07c8f729
 docker tag  $ECR:deepep-v2-20260902-07c8f729 kimi-k3-efa-v2:latest
@@ -88,7 +96,10 @@ bash sync.sh push && bash 93_matrix.sh    # ~1 h: 5 configs x 2 runs
 
 The ECR tag names the base sglang commit (`07c8f729`) and the build date, and the
 pull retags it to `kimi-k3-efa-v2:latest` because that is what `env_common.sh`
-defaults `IMAGE` to. **Pull the dated tag, not `:latest`** — `:latest` moves, so a
+defaults `IMAGE` to. It is pushed to two regions on purpose: p6-b300 capacity is
+scarce enough that the instance shows up wherever it shows up, and an image that
+lives in the wrong region is an extra 15 minutes at exactly the moment a spot
+instance is finally in hand. **Pull the dated tag, not `:latest`** — `:latest` moves, so a
 run recorded against it cannot be reproduced later. `deepep-v2-20260902-07c8f729`
 was built and verified on a p5.4xlarge: mooncake resolves to exactly one
 distribution (`mooncake-transfer-engine-efa-cuda13` 0.3.13.post1) whose
