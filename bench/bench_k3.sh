@@ -1,8 +1,8 @@
 #!/bin/bash
 # One sglang.bench_serving run against an already-running K3 server.
 #
-#   bash bench/bench_k3.sh                      # all defaults, tag auto-generated
-#   ISL=8192 OSL=1 NP=16 CONC=4 bash bench/bench_k3.sh
+#   bash bench/bench_k3.sh                      # 8K in / 1K out, tag auto-generated
+#   ISL=8192 OSL=1 NP=16 CONC=4 bash bench/bench_k3.sh          # prefill-only arm
 #   TAG=v2_p8k_c2048 ISL=8192 OSL=1 NP=16 CONC=4 bash bench/bench_k3.sh
 #
 # TAG IS THE CONTRACT WITH gen_bench_table.py. That script has a hard-coded ARMS
@@ -22,11 +22,24 @@ set -u
 
 C="${C:-k3-v2-unified}"     # server container to bench (also where the client runs)
 PORT="${PORT:-30000}"       # 30000 unified / 30001 prefill / 30002 decode / 30010 v1
-# Defaults match 91_bench.sh so the two bench entry points agree.
-ISL="${ISL:-1024}"
+# 8K in / 1K out: a long prompt with a normal-length answer, which is the shape
+# this model is actually served in. It exercises prefill AND decode in one run,
+# unlike the OSL=1 prefill arm or the ISL=256 decode arm. This deliberately does
+# NOT match 91_bench.sh's 1K/1K -- that script is currently unusable anyway
+# (env_common.sh still points at the July kimi-k3-efa image and a stale
+# --served-model-name), so there is nothing to stay in step with.
+#
+# CONC IS BOUNDED BY THE KV POOL, not by taste. Each request holds ISL+OSL tokens
+# at its peak, so the pool caps live requests at max_total_num_tokens/(ISL+OSL) --
+# at the launcher defaults that is 232384/9216 = 25. Asking for more does not fail,
+# it queues and retracts, and the run then reports a concurrency well below what
+# was requested, so the number is not the number you asked for. 16 leaves margin.
+# If you raise ISL/OSL, re-do this division: the pool is printed at startup as
+# `max_total_num_tokens=`.
+ISL="${ISL:-8192}"
 OSL="${OSL:-1024}"
-NP="${NP:-64}"
-CONC="${CONC:-32}"
+NP="${NP:-32}"
+CONC="${CONC:-16}"
 TAG="${TAG:-auto-isl${ISL}-osl${OSL}-n${NP}-c${CONC}}"
 
 OUT="/opt/dlami/nvme/k3_bench_${TAG}.txt"
