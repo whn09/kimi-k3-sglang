@@ -23,6 +23,11 @@ ARMS = [
     ("v2_d256",      "deepep_v2", "decode ISL=256 OSL=1K conc32", 512, "on",  "CAP=512"),
     ("v1_d256_c512", "deepep",    "decode ISL=256 OSL=1K conc32", 512, "on",  "matched to v2_d256"),
     ("v1_d256",      "deepep",    "decode ISL=256 OSL=1K conc32", 2048, "on", "UNMATCHED chunk"),
+    # The graphs-on-vs-off trade at the real serving shape (results 4.2). Both arms
+    # ran at max_total_num_tokens=232384, so the only axes that differ are the two in
+    # the label. CAP tracks chunk here because moe_hook.py forces CHUNK <= CAP.
+    ("8k1k_nograph_cap2048", "deepep_v2", "8K/1K conc16", 2048, "off", "CAP=2048"),
+    ("8k1k_graph_cap1024",   "deepep_v2", "8K/1K conc16", 1024, "on",  "CAP=1024, the default"),
 ]
 
 FIELDS = [
@@ -33,6 +38,10 @@ FIELDS = [
     ("ttft_p50", r"Median TTFT \(ms\):\s+([\d.]+)"),
     ("ttft_avg", r"Mean TTFT \(ms\):\s+([\d.]+)"),
     ("tpot_p50", r"Median TPOT \(ms\):\s+([\d.]+)"),
+    # ITL is the cleaner decode-step number: TPOT averages over the whole request and
+    # picks up prefill interleaving, ITL is inter-token. The graphs-on/off gap is
+    # 5.86x in ITL but only 4.25x in TPOT for exactly that reason -- quote both.
+    ("itl_p50", r"Median ITL \(ms\):\s+([\d.]+)"),
     ("ok",      r"Successful requests:\s+(\d+)"),
 ]
 
@@ -61,14 +70,14 @@ def main():
         d = parse(p)
         rows.append((tag, backend, workload, chunk, cg, note, d))
 
-    print("| tag | backend | workload | chunk | cudagraph | reqs | dur (s) | in tok/s | out tok/s | conc | TTFT p50 (ms) | TTFT mean (ms) | TPOT p50 (ms) | note |")
-    print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+    print("| tag | backend | workload | chunk | cudagraph | reqs | dur (s) | in tok/s | out tok/s | conc | TTFT p50 (ms) | TTFT mean (ms) | TPOT p50 (ms) | ITL p50 (ms) | note |")
+    print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     for tag, backend, workload, chunk, cg, note, d in rows:
-        print("| `{}` | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |".format(
+        print("| `{}` | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |".format(
             tag, backend, workload, chunk, cg,
             cell(d["ok"], "{:.0f}"), cell(d["dur"]),
             cell(d["in_tps"]), cell(d["out_tps"]), cell(d["conc"]),
-            cell(d["ttft_p50"]), cell(d["ttft_avg"]), cell(d["tpot_p50"]), note))
+            cell(d["ttft_p50"]), cell(d["ttft_avg"]), cell(d["tpot_p50"]), cell(d["itl_p50"]), note))
     if missing:
         print("\nMISSING logs (row omitted, not zero): " + ", ".join(missing))
 

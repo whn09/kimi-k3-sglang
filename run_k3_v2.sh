@@ -34,32 +34,71 @@ MODE="${1:-unified}"
 NAME="k3-v2-$MODE"
 IMG=lmsysorg/sglang:nightly-dev-cu13-20260901-07c8f729
 P=/opt/dlami/nvme/patch
-# THE DEFAULTS BELOW ARE THE MEASURED-WORKING CONFIG. `bash run_k3_v2.sh` with no
-# env overrides reaches READY in ~165 s with max_total_num_tokens=232384 and serves.
+# THE DEFAULTS BELOW ARE THE MEASURED-BEST CONFIG for serving. `bash run_k3_v2.sh`
+# with no env overrides reaches READY in ~230 s (of which 61.59 s is CUDA graph
+# capture) with max_total_num_tokens=232384, and on 8K in / 1K out at concurrency 16
+# it is 3.27x the end-to-end throughput of the previous defaults. See DISCG below
+# for the both-ways measurement.
 # (MAXRUN=32 instead gives a bigger pool, 364416, at the cost of capping
 # concurrency at 32 -- that is the prefill-measurement arm, not a better default.)
 # Everything here is coupled, so change one knob and you are off the measured
 # path -- the failure is always a late OOM, never a clear error:
-#   CAP=2048   is the ceiling. The v2 ElasticBuffer costs exactly 10.5 GiB per
-#              1024 of CAP, there are ~39.6 GB free after the KV pool, and
-#              CAP=3072 asks 31.50 GiB but still OOMs.
-#   CHUNK=CAP  is forced: validate_deepep_v2_dispatch_token_budget
-#              (moe_hook.py:381) enforces chunked_prefill_size/dp_size <= CAP.
+#   CAP        is NOT an sglang flag -- there is no --cap. It is this script's name
+#              for the env var SGLANG_DEEPEP_V2_NUM_MAX_DISPATCH_TOKENS_PER_RANK
+#              (environ.py:1085, sglang's own default is 128, so 2048 is 16x
+#              upstream). It is DeepEP v2's per-rank communication buffer capacity
+#              in tokens. Because it is passed by environment it does not appear in
+#              `docker inspect .Args` -- bench_k3.sh reads it out of .Config.Env
+#              separately for exactly that reason.
+#
+#              ONE capacity is bound by TWO unrelated constraints
+#              (validate_deepep_v2_dispatch_token_budget, moe_hook.py:375-410):
+#                prefill:      CHUNK / dp_size  <= CAP   -> wants 2048
+#                decode graph: graph_bs * tokens_per_req <= CAP -> wants only 104
+#              So raising CAP to buy a big prefill chunk also inflates the decode
+#              graph's workspace by the same 16x. That is where the 33.43 GiB
+#              capture pool comes from, and why trimming the captured bs list does
+#              not help at all (measured: bs=[8,16,24] still took 33.43 GiB and
+#              OOMed, while CAP=1024 with all 13 sizes took 18.48 GB and started).
+#              The two needs should not share one number; that is worth an upstream
+#              issue.
+#   CAP=1024   is the ceiling WITH decode graphs, and it is the default because
+#              decode graphs are worth far more than the chunk they cost -- see
+#              DISCG below for the measurement. The arithmetic is tight: capture
+#              starts at avail 38.99 GB and takes 18.48 GB, leaving 20.51 GB for a
+#              10.5 GiB ElasticBuffer. CAP=1536 would need ~27.7 + 15.75 = 43 GB of
+#              38.99 and cannot work, so do not bother trying 1536 or 2048 with
+#              graphs on. (Graphs OFF, the ceiling is CAP=2048: ElasticBuffer is
+#              10.5 GiB per 1024 of CAP and CAP=3072 asks 31.50 GiB and OOMs.)
+#   CHUNK=CAP  is forced by the prefill constraint above, at dp_size=1.
 #   DP=1       DP attention is NOT an escape hatch here, despite making the
 #              budget check trivially pass. It stops TP-sharding the attention
 #              weights and replicates them per DP rank: weights go 214.88 ->
 #              265.87 GiB of 267.68 and it OOMs inside _initialize_model, before
 #              the KV pool even exists. Measured, not theorised -- DP=8 is what
 #              this script used to default to, and it could never start.
-#   DISCG=1    decode CUDA graphs are OFF by default. Capture takes a 33.43 GiB
-#              private pool, which does not fit alongside a 21 GiB
-#              ElasticBuffer: at CAP=2048 with graphs on, capture OOMs asking
-#              6.12 GiB. Graphs on caps CAP at 1024 (verified: READY,
-#              max_total=232384) -- i.e. graphs cost half the prefill chunk, and
-#              prefill throughput here is nearly linear in chunk (512 -> 2048 is
-#              3.94x on the same backend). For a decode-latency measurement set
-#              DISCG=0 CAP=1024 CHUNK=1024 and accept the smaller chunk.
-CAP="${CAP:-2048}"
+#   DISCG=0    decode CUDA graphs are ON by default, which is what forces CAP down
+#              to 1024. This trade was MEASURED both ways, 8K in / 1K out at
+#              concurrency 16, same 232384-token pool on both sides
+#              (results/deepep_v2_on_k3_b300.md 4.2):
+#
+#                                  graphs OFF/CAP=2048   graphs ON/CAP=1024
+#                end-to-end (32 req)      565.55 s            172.77 s   3.27x
+#                output tok/s               57.94              189.67    3.27x
+#                ITL p50                   255.24 ms           43.54 ms  5.86x
+#                TTFT p50                11735.66 ms        22571.74 ms  0.52x
+#
+#              Graphs cost half the prefill chunk, so TTFT doubles -- but each
+#              token after the first arrives 5.86x sooner. Break-even is at ~52
+#              output tokens (11.7 + 0.255N = 22.6 + 0.0435N), so anything that
+#              generates a real answer wins, by a lot.
+#              SET DISCG=1 CAP=2048 CHUNK=2048 for a prefill-only measurement
+#              (OSL=1) or a workload whose outputs are shorter than ~52 tokens --
+#              there the big chunk wins and graphs are dead weight.
+#              Do NOT try to keep both by trimming the captured batch sizes: the
+#              capture pool is sized by CAP, not by how many shapes are captured
+#              (see CAP above for the measurement that settles this).
+CAP="${CAP:-1024}"
 CHUNK="${CHUNK:-$CAP}"
 MEMFRAC="${MEMFRAC:-0.85}"
 DP="${DP:-1}"          # DP attention degree; 1 disables it. See above: >1 OOMs.
@@ -93,14 +132,33 @@ RADIXARGS=()
 # MEASURED allocation order and cost per B300 (267.68 GiB), MEMFRAC=0.85:
 #   Load weight end   -> mem usage 214.88 GB, avail 51.11 GB
 #   KV Cache          -> 5.99 GB / 232384 tokens, avail 39.63 GB
-#   decode CUDA graph -> capture begins at avail 38.99 GB and takes a 33.43 GiB
-#                        private pool
+#   decode CUDA graph -> capture begins at avail 38.99 GB; 18.48 GB at CAP=1024,
+#                        33.43 GiB at CAP=2048 (which then OOMs asking 6.12 GiB)
 #   DeepEP v2 buffer  -> LAST, 10.5 GiB per 1024 of CAP
-# So the competition is ElasticBuffer vs CUDA graph, not vs the KV pool, and 33.43
-# + 21 does not fit in 39.63: at CAP=2048 with graphs on it is *capture* that OOMs
-# (asking 6.12 GiB), before the ElasticBuffer is ever allocated. Off by default.
+# So the competition is ElasticBuffer vs CUDA graph, never the KV pool, and at
+# CAP=2048 it is *capture* that dies, before the ElasticBuffer is ever allocated.
+# CAP=1024 is the largest CAP where both fit: 18.48 + 10.5 <= 38.99.
+#
+# CGMAXBS trims the captured batch-size list. It does NOT save memory -- that was
+# the hypothesis and it is now disproved. Two measurements at avail 38.99 GB:
+#   CAP=2048, bs=[8,16,24]                  -> 33.43 GiB, OOM
+#   CAP=1024, bs=[8,16,...,104] (13 shapes) ->  18.48 GB, starts
+# Four times fewer shapes cost MORE memory; the only variable that moved the number
+# is CAP. The capture pool is sized by the per-rank capacity, not by how many shapes
+# are captured, so there is no way to keep CAP=2048 and graphs at the same time.
+# What CGMAXBS is still good for is startup time: capture takes 61.59 s for 13
+# shapes, and this server cannot reach a decode batch above ~25 anyway (the KV pool
+# caps live requests at max_total_num_tokens/(ISL+OSL) = 232384/9216 = 25 at 8K/1K),
+# so capturing up to 104 is wasted time. UNMEASURED as a default, and keep it above
+# the pool cap or large batches silently fall out of the graph and back to 255 ms.
+# NOTE the flag was renamed: --cuda-graph-max-bs is now a deprecated alias for
+# --cuda-graph-max-bs-decode. Only meaningful with DISCG=0.
 CGARGS=()
-[ "${DISCG:-1}" = 1 ] && CGARGS=(--disable-cuda-graph)
+if [ "${DISCG:-0}" = 1 ]; then
+  CGARGS=(--disable-cuda-graph)
+elif [ -n "${CGMAXBS:-}" ]; then
+  CGARGS=(--cuda-graph-max-bs-decode "$CGMAXBS")
+fi
 
 DIS=(); PORTX=30000
 case "$MODE" in
@@ -159,4 +217,10 @@ docker run -d --name "$NAME" --gpus all --net=host --ipc=host --shm-size 32g \
   --mem-fraction-static "$MEMFRAC" --mamba-full-memory-ratio "$MAMBA" \
   --host 0.0.0.0 --port "$PORTX" --decode-log-interval 1 \
   --watchdog-timeout 1000000 --dist-timeout 7200 >/dev/null
-echo "launched $NAME  mode=$MODE port=$PORTX cap=$CAP chunk=$CHUNK dp=$DP dcp=$DCP mamba=$MAMBA maxrun=$MAXRUN memfrac=$MEMFRAC gin=${GIN:-3} hca=${HCA:-ibp198s0f0}"
+# Print every axis that decides whether this boots and how fast it decodes --
+# especially DISCG/CGMAXBS, which were missing here and are the difference between
+# a 256 ms and a ~35 ms decode step. `cap` is spelled out: it is an env var, not a
+# flag, so it is invisible in `docker inspect .Args`.
+echo "launched $NAME  mode=$MODE port=$PORTX chunk=$CHUNK dp=$DP dcp=$DCP mamba=$MAMBA maxrun=$MAXRUN memfrac=$MEMFRAC gin=${GIN:-3} hca=${HCA:-ibp198s0f0}"
+echo "  SGLANG_DEEPEP_V2_NUM_MAX_DISPATCH_TOKENS_PER_RANK=$CAP  (env var, not a flag; upstream default 128)"
+echo "  decode cuda graph: $([ "${DISCG:-0}" = 1 ] && echo "DISABLED (DISCG=1) -- expect ~255 ms ITL" || echo "ON, max-bs-decode=${CGMAXBS:-<sglang default>} -- expect ~44 ms ITL")"

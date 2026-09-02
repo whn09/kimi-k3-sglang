@@ -34,14 +34,16 @@ once sampling amplifies a tie, and irrelevant given the identical logprobs.
 
 ## 3. Throughput
 
-| tag | backend | workload | chunk | cudagraph | reqs | dur (s) | in tok/s | out tok/s | conc | TTFT p50 (ms) | TTFT mean (ms) | TPOT p50 (ms) | note |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| `v2_p8k` | deepep_v2 | prefill ISL=8K OSL=1 conc4 | 512 | on | 16 | 87.45 | 1498.77 | 0.18 | 3.64 | 21794.28 | 19879.54 | 0.00 | CAP=512 |
-| `v2_p8k_c2048` | deepep_v2 | prefill ISL=8K OSL=1 conc4 | 2048 | off | 16 | 22.20 | 5903.74 | 0.72 | 3.63 | 5477.49 | 5042.35 | 0.00 | CAP=2048 |
-| `v1_p8k_c2048` | deepep | prefill ISL=8K OSL=1 conc4 | 2048 | on | 16 | 23.66 | 5540.26 | 0.68 | 3.67 | 5829.51 | 5430.68 | 0.00 | no ElasticBuffer |
-| `v2_d256` | deepep_v2 | decode ISL=256 OSL=1K conc32 | 512 | on | 32 | 87.49 | 93.64 | 374.55 | 22.15 | 3443.80 | 18138.40 | 42.05 | CAP=512 |
-| `v1_d256_c512` | deepep | decode ISL=256 OSL=1K conc32 | 512 | on | 32 | 45.92 | 178.40 | 713.58 | 31.97 | 3363.22 | 3358.49 | 41.56 | matched to v2_d256 |
-| `v1_d256` | deepep | decode ISL=256 OSL=1K conc32 | 2048 | on | 32 | 42.39 | 193.25 | 772.98 | 31.96 | 1590.06 | 1641.05 | 39.84 | UNMATCHED chunk |
+| tag | backend | workload | chunk | cudagraph | reqs | dur (s) | in tok/s | out tok/s | conc | TTFT p50 (ms) | TTFT mean (ms) | TPOT p50 (ms) | ITL p50 (ms) | note |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `v2_p8k` | deepep_v2 | prefill ISL=8K OSL=1 conc4 | 512 | on | 16 | 87.45 | 1498.77 | 0.18 | 3.64 | 21794.28 | 19879.54 | 0.00 | 0.00 | CAP=512 |
+| `v2_p8k_c2048` | deepep_v2 | prefill ISL=8K OSL=1 conc4 | 2048 | off | 16 | 22.20 | 5903.74 | 0.72 | 3.63 | 5477.49 | 5042.35 | 0.00 | 0.00 | CAP=2048 |
+| `v1_p8k_c2048` | deepep | prefill ISL=8K OSL=1 conc4 | 2048 | on | 16 | 23.66 | 5540.26 | 0.68 | 3.67 | 5829.51 | 5430.68 | 0.00 | 0.00 | no ElasticBuffer |
+| `v2_d256` | deepep_v2 | decode ISL=256 OSL=1K conc32 | 512 | on | 32 | 87.49 | 93.64 | 374.55 | 22.15 | 3443.80 | 18138.40 | 42.05 | 41.51 | CAP=512 |
+| `v1_d256_c512` | deepep | decode ISL=256 OSL=1K conc32 | 512 | on | 32 | 45.92 | 178.40 | 713.58 | 31.97 | 3363.22 | 3358.49 | 41.56 | 39.24 | matched to v2_d256 |
+| `v1_d256` | deepep | decode ISL=256 OSL=1K conc32 | 2048 | on | 32 | 42.39 | 193.25 | 772.98 | 31.96 | 1590.06 | 1641.05 | 39.84 | 39.49 | UNMATCHED chunk |
+| `8k1k_nograph_cap2048` | deepep_v2 | 8K/1K conc16 | 2048 | off | 32 | 565.55 | 463.52 | 57.94 | 16.00 | 11735.66 | 11733.14 | 264.94 | 255.24 | CAP=2048 |
+| `8k1k_graph_cap1024` | deepep_v2 | 8K/1K conc16 | 1024 | on | 32 | 172.77 | 1517.32 | 189.67 | 16.00 | 22571.74 | 22537.76 | 62.34 | 43.54 | CAP=1024, the default |
 
 ### Prefill (ISL=8K, OSL=1) — v2 wins by 6.6% at matched chunk
 
@@ -113,9 +115,9 @@ Three launches on `B300-KR` today, `MEMFRAC=0.85 DP=1 MAXRUN=0`, pin the ceiling
 
 | CAP | CHUNK | decode graphs | result |
 |---|---|---|---|
-| 1024 | 1024 | **on** | READY, `max_total=232384`, serves |
+| 1024 | 1024 | **on** | READY, `max_total=232384`, serves ← **the default, as of §4.2** |
 | 2048 | 2048 | **on** | **OOM in `Capture cuda graph`**, asking 6.12 GiB |
-| 2048 | 2048 | off | READY, `max_total=232384`, serves ← **the default** |
+| 2048 | 2048 | off | READY, `max_total=232384`, serves — was the default for one day |
 
 **This corrects §4's allocation story.** With graphs on it is *not* the
 ElasticBuffer that OOMs — capture takes a **33.43 GiB private pool** and dies
@@ -123,16 +125,97 @@ before the ElasticBuffer is ever allocated (`Memory pool end avail=39.63 GB` ->
 `capture begin avail=38.99 GB` -> OOM; "33.43 GiB allocated in private pools").
 33.43 + 21.00 does not fit in 39.63. So the real trade is **decode CUDA graphs
 cost half the prefill chunk**: graphs on caps CAP at 1024, graphs off allows 2048.
-Since prefill throughput is nearly linear in chunk (512 -> 2048 is 3.94x, §3),
-graphs off is the better default for a unified server. `--cuda-graph-max-bs` is an
-untested third option: capture covers 13 batch sizes `[8,16,...,104]` by default,
-and trimming that list should shrink the 33.43 GiB enough to hold both.
+
+> **Both conclusions in this paragraph were wrong — see §4.2, which measured the
+> trade end to end.** (a) "Graphs off is the better default": no, graphs on is
+> **3.27x** faster end to end on 8K/1K, because the chunk only costs TTFT while
+> graphs cost every token. (b) "`--cuda-graph-max-bs` should shrink the 33.43 GiB
+> enough to hold both": no, the capture pool is sized by CAP and is completely
+> insensitive to the captured shape count — 3 shapes at CAP=2048 still took 33.43
+> GiB. The original reasoning below is kept because it shows the trap: prefill
+> throughput really is near-linear in chunk (512 -> 2048 is 3.94x, §3), and
+> generalising from that one axis alone is what produced the wrong default.
 
 Note `max_total_num_tokens` is **232384 in all three rows** — it is set by MEMFRAC
 and MAXRUN, not by CAP, because the ElasticBuffer is allocated after the KV pool.
 The 364416 figure above belongs to `MAXRUN=32`, which buys a bigger pool by
 capping concurrency at 32; that is the prefill-measurement arm, not a better
 default.
+
+### 4.2 The CAP ceiling is the wrong trade — decode CUDA graphs win 3.27x (2026-09-02)
+
+§4.1 concluded "graphs off is the better default for a unified server" from the
+*prefill* linearity alone. Measured both ways end to end, that is **wrong**, and the
+launcher default is now graphs **on**.
+
+Same box, same 232384-token pool on both sides, `bench_k3.sh` defaults
+(8K in / 1K out, 32 requests, concurrency 16, `--random-range-ratio 1.0`):
+
+| | graphs OFF, CAP=CHUNK=2048 | graphs ON, CAP=CHUNK=1024 | ratio |
+|---|---|---|---|
+| end-to-end duration, 32 req | 565.55 s | **172.77 s** | **3.27x** |
+| output token throughput | 57.94 tok/s | **189.67 tok/s** | **3.27x** |
+| input token throughput | 463.52 tok/s | **1517.32 tok/s** | 3.27x |
+| ITL p50 | 255.24 ms | **43.54 ms** | **5.86x** |
+| TPOT p50 | 264.94 ms | **62.34 ms** | 4.25x |
+| TTFT p50 | **11735.66 ms** | 22571.74 ms | 0.52x |
+| achieved concurrency | 16.00 | 16.00 | — |
+| GPU util (`nvidia-smi`) | 30-49% | **25-38%** | — |
+| power draw | 311-321 W | **419-441 W** | +36% |
+
+Logs: `k3_bench_8k1k_nograph_cap2048.txt`, `k3_bench_8k1k_graph_cap1024.txt`.
+
+**TTFT doubles, everything else improves ~4-6x.** Break-even on output length:
+`11.7 + 0.255N = 22.6 + 0.0435N` -> **N ≈ 52 tokens**. Any request that generates a
+real answer wins. Keep `DISCG=1 CAP=2048` only for a prefill-only measurement
+(OSL=1) or outputs shorter than ~52 tokens.
+
+**Three mechanisms, all measured:**
+
+1. **The 255 ms step is kernel-launch overhead, not the fixed-capacity dispatch.**
+   Without graphs the decode step time is flat in batch size — batch 2 -> 16 moved it
+   280 -> 256 ms while total throughput went 7.15 -> 62.6 tok/s (near-linear). A
+   per-step cost independent of batch is launch overhead, not compute, not HBM. And
+   it is not CAP's fixed-capacity a2a either. Compared at the same metric (ITL p50,
+   from the generator): **41.51 ms** at CAP=512 / ISL=256 (§3 `v2_d256`) vs **43.54
+   ms** at CAP=1024 / ISL=8192 (here) — +4.9% across a 2x CAP and a 32x context. So
+   neither the a2a padding nor the context length is what costs the 255 ms.
+   (Do not compare against `v2_d256`'s *TPOT* of 42.05 ms as if it were the same
+   quantity: TPOT includes prefill interleaving, which is why the graphs-on/off gap
+   is 5.86x in ITL but only 4.25x in TPOT.)
+
+2. **The capture pool is sized by CAP, not by how many shapes are captured.** This
+   kills the obvious "keep both" idea. `--cuda-graph-max-bs` is a deprecated alias
+   for `--cuda-graph-max-bs-decode` in this image; trimming the list works (the log
+   prints `bs=[8, 16, 24]`) and saves nothing:
+
+   | CAP | captured shapes | capture memory | outcome |
+   |---|---|---|---|
+   | 2048 | 3 — `[8,16,24]` | **33.43 GiB** | OOM asking 6.12 GiB |
+   | 1024 | 13 — `[8,16,...,104]` | **18.48 GB** | starts, 61.59 s |
+
+   4x fewer shapes cost *more* memory. Only CAP moved the number. So CAP=1024 is the
+   hard ceiling with graphs on: 18.48 + 10.5 <= 38.99 GB, while CAP=1536 would need
+   ~27.7 + 15.75 = 43 GB. `--cuda-graph-max-bs-decode` is still worth setting to cut
+   the 61.59 s capture, since the pool caps live requests at 232384/9216 = 25 anyway.
+
+3. **Why one knob controls both** (`validate_deepep_v2_dispatch_token_budget`,
+   `moe_hook.py:375-410`). `SGLANG_DEEPEP_V2_NUM_MAX_DISPATCH_TOKENS_PER_RANK`
+   (`environ.py:1085`, upstream default **128**) is checked against two unrelated
+   requirements: `CHUNK / dp_size <= CAP` wants 2048, and
+   `graph_bs * tokens_per_req <= CAP` wants only 104. Raising CAP to buy prefill
+   chunk inflates the decode graph's workspace by the same factor. **These two needs
+   should not share one capacity — worth an upstream issue.** Note CAP is an env var,
+   not a flag, so it is invisible in `docker inspect .Args`; `bench_k3.sh` reads it
+   from `.Config.Env` into every log header for this reason.
+
+**Methodology warning: `nvidia-smi utilization.gpu` inverted the conclusion here.**
+It *fell* (30-49% -> 25-38%) while throughput rose 6.2x. It only reports whether a
+kernel was resident at sample time, not SM occupancy or work done — CUDA graphs
+collapse thousands of small launches into one replay, so the sampler hits fewer busy
+instants while doing far more work. Power tracked reality (315 W -> 430 W). Use
+`gen throughput` from the server log and power draw; do not diagnose from
+`utilization.gpu`.
 
 Also fixed in the launcher: `docker rm -f` can return with the container still
 present (killed, `Exited 137`), so the next `docker run` failed with "container
