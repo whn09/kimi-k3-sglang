@@ -11,11 +11,26 @@ MAXRUN="${MAXRUN:-32}"
 # which is exactly why the comparison must be run at a MATCHED CHUNK. Prefill
 # throughput is ~linear in CHUNK on this model (v2: 512 -> 2048 gave 3.94x), so an
 # unmatched chunk would swamp any real backend difference.
+#
+# THE DEFAULTS OF THE TWO SCRIPTS ARE NOT MATCHED, ON PURPOSE. run_k3_v2.sh
+# defaults to MAXRUN=0 (unlimited) because it has to be a usable *server* on pure
+# defaults; this script keeps MAXRUN=32 because that is the arm the numbers in
+# results/deepep_v2_on_k3_b300.md were measured at. MAXRUN changes both the
+# concurrency cap and max_total_num_tokens (measured on v2 at CAP=CHUNK=2048,
+# graphs off, everything else equal: MAXRUN 0 -> 232384, 32 -> 364416), so for any
+# v1/v2 comparison pass the SAME MAXRUN and the SAME CHUNK to both explicitly. Do
+# not compare two default launches.
 RUNARGS=(); [ "$MAXRUN" -gt 0 ] && RUNARGS=(--max-running-requests "$MAXRUN")
 RADIXARGS=(); [ "${NORADIX:-1}" = 1 ] && RADIXARGS=(--disable-radix-cache)
 CGARGS=(); [ "${DISCG:-0}" = 1 ] && CGARGS=(--disable-cuda-graph)
 docker rm -f "$NAME" >/dev/null 2>&1
-# See run_k3_v2.sh: `docker rm -f` returns before the GPUs are actually released.
+# See run_k3_v2.sh: `docker rm -f` returns both before the container is gone (it
+# can linger as Exited 137, and then `docker run` fails "name is already in use")
+# and before the GPUs are released. Wait for both, in that order.
+for _ in $(seq 1 30); do
+  docker inspect "$NAME" >/dev/null 2>&1 || break
+  echo "waiting for $NAME to be removed"; docker rm -f "$NAME" >/dev/null 2>&1; sleep 2
+done
 for _ in $(seq 1 60); do
   used=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits | paste -sd+ | bc)
   [ "${used:-1}" -lt 2048 ] && break

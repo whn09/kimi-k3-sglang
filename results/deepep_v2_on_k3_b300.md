@@ -101,6 +101,44 @@ DISCG=1` -> READY 210 s, `max_total_num_tokens=364416`. Decode arm: `CAP=512
 CHUNK=512 MEMFRAC=0.85` with graphs on -> `max_total_num_tokens=256576`. There is no
 single config that is right for both; the launcher takes both as env knobs.
 
+### 4.1 The launcher defaults (2026-09-02) — and what the CAP ceiling really is
+
+The launcher used to default to `DP=8 CHUNK=8192 CAP=1024`, which **could never
+start**: `DP=8` is the measured-and-closed DP-attention route above, so
+`bash run_k3_v2.sh` OOMed on a 588 MiB alloc at 265.60 GiB allocated. Defaults are
+now the measured-working config; `bash run_k3_v2.sh` with no env overrides reaches
+READY in ~165 s (warm caches) at `max_total_num_tokens=232384` and answers.
+
+Three launches on `B300-KR` today, `MEMFRAC=0.85 DP=1 MAXRUN=0`, pin the ceiling:
+
+| CAP | CHUNK | decode graphs | result |
+|---|---|---|---|
+| 1024 | 1024 | **on** | READY, `max_total=232384`, serves |
+| 2048 | 2048 | **on** | **OOM in `Capture cuda graph`**, asking 6.12 GiB |
+| 2048 | 2048 | off | READY, `max_total=232384`, serves ← **the default** |
+
+**This corrects §4's allocation story.** With graphs on it is *not* the
+ElasticBuffer that OOMs — capture takes a **33.43 GiB private pool** and dies
+before the ElasticBuffer is ever allocated (`Memory pool end avail=39.63 GB` ->
+`capture begin avail=38.99 GB` -> OOM; "33.43 GiB allocated in private pools").
+33.43 + 21.00 does not fit in 39.63. So the real trade is **decode CUDA graphs
+cost half the prefill chunk**: graphs on caps CAP at 1024, graphs off allows 2048.
+Since prefill throughput is nearly linear in chunk (512 -> 2048 is 3.94x, §3),
+graphs off is the better default for a unified server. `--cuda-graph-max-bs` is an
+untested third option: capture covers 13 batch sizes `[8,16,...,104]` by default,
+and trimming that list should shrink the 33.43 GiB enough to hold both.
+
+Note `max_total_num_tokens` is **232384 in all three rows** — it is set by MEMFRAC
+and MAXRUN, not by CAP, because the ElasticBuffer is allocated after the KV pool.
+The 364416 figure above belongs to `MAXRUN=32`, which buys a bigger pool by
+capping concurrency at 32; that is the prefill-measurement arm, not a better
+default.
+
+Also fixed in the launcher: `docker rm -f` can return with the container still
+present (killed, `Exited 137`), so the next `docker run` failed with "container
+name is already in use" — a second, independent way a relaunch could not start.
+The script now waits for removal *and* for the GPU drain.
+
 Two traps that cost several boots and look like memory bugs but are not:
 
 - `docker rm -f` returns **before** the 8 scheduler processes release the GPUs.
