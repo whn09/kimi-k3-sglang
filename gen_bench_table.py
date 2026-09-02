@@ -72,6 +72,17 @@ def main():
     if missing:
         print("\nMISSING logs (row omitted, not zero): " + ", ".join(missing))
 
+    # Logs that exist but are not in ARMS -- typically a bench_k3.sh run that used
+    # the auto tag. Say so, or a real measurement sits on disk and never surfaces.
+    known = {tag for tag, *_ in ARMS}
+    extra = sorted(
+        p.stem[len("k3_bench_"):]
+        for p in root.glob("k3_bench_*.txt")
+        if p.stem[len("k3_bench_"):] not in known
+    )
+    if extra:
+        print("\nNOT IN THE TABLE (add to ARMS to include): " + ", ".join(extra))
+
 
 if __name__ == "__main__":
     main()
