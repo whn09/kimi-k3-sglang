@@ -1,0 +1,10 @@
+--- /opt/dlami/nvme/patch/orig/moe_hook.py	2026-09-01 01:29:49.000000000 +0000
++++ /opt/dlami/nvme/patch/moe_hook.py	2026-09-01 09:03:25.401156526 +0000
+@@ -437,6 +437,7 @@
+         "DeepseekV3ForCausalLM",
+         "DeepseekV4ForCausalLM",
+         "Qwen3MoeForCausalLM",
++        "KimiK3ForConditionalGeneration",  # LOCAL EXPERIMENT ONLY
+     )
+     if architecture not in validated_architectures:
+         raise ValueError(

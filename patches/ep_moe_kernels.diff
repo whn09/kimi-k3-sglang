@@ -1,0 +1,19 @@
+--- /opt/dlami/nvme/patch/orig/ep_moe_kernels.py	2026-09-01 01:29:49.000000000 +0000
++++ /opt/dlami/nvme/patch/ep_moe_kernels.py	2026-09-01 09:42:10.054826084 +0000
+@@ -1266,6 +1266,7 @@
+     output_tensor_scale: torch.Tensor,
+     m_indices: torch.Tensor,
+     output_index: torch.Tensor,
++    expert_start: int = 0,
+     scale_ue8m0: bool = False,
+ ):
+     BLOCK_E = 128
+@@ -1315,6 +1316,8 @@
+         output_index,
+         output_index.stride(0),
+         output_index.stride(1),
++        expert_start,
++        num_experts,
+         topk_num=recv_topk.shape[1],
+         num_warps=num_warps,
+         HIDDEN_SIZE=hidden_size,

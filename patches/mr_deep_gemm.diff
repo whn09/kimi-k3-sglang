@@ -1,0 +1,19 @@
+--- /opt/dlami/nvme/patch/orig/mr_deep_gemm.py	2026-09-01 01:29:49.000000000 +0000
++++ /opt/dlami/nvme/patch/mr_deep_gemm.py	2026-09-01 09:35:03.383381318 +0000
+@@ -1592,7 +1592,15 @@
+             "DeepEP v2 -> DeepGEMM requires FP8 dispatch output with activation "
+             "scales, but the dispatch output carried none."
+         )
+-    assert runner_config.activation == "silu"
++    # LOCAL EXPERIMENT ONLY (Kimi-K3 on deepep_v2).  Upstream oversight: the v1
++    # pre-permute one screen up asserts `in ("silu", "situ")` (:1244) and the
++    # runner constructor asserts the same pair (:272, "needs the masked-gemm
++    # activation site to branch"), and BOTH v2 activation sites already carry a
++    # full situ branch -- contiguous :378 (_situ_mul_quant_contig_kernel) and
++    # masked :702 (_varlen_deep_gemm_situ_mul_quant ->
++    # sglang.kernels.ops.kimi_k3.situ_and_mul_masked_post_quant, a K3-specific
++    # kernel).  Only this one assert was not widened when situ landed.
++    assert runner_config.activation in ("silu", "situ")
+ 
+     if is_expanded:
+         if psum_num_recv_tokens_per_expert is None:

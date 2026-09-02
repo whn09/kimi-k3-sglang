@@ -1,0 +1,38 @@
+### Q1 "What is the capital of France? Answer in one word."
+FINISH: stop | tokens: 40
+The user is asking a simple factual question: the capital of France. They want a one-word answer. The answer is Paris.<|close|>think<|sep|><|open|>response<|sep|>Paris<|close|>response<|sep|><|close|>message<|sep|>
+
+### Q2 "Compute 17 * 23. Show only the number."
+FINISH: stop | tokens: 63
+The user wants me to compute 17 * 23 and show only the number.
+
+17 * 23 = 17 * 20 + 17 * 3 = 340 + 51 = 391
+
+The answer is 391.<|close|>think<|sep|><|open|>response<|sep|>391<|close|>response<|sep|><|close|>message<|sep|>
+
+### Q3 "List the first 8 prime numbers, comma separated."
+FINISH: length | tokens: 96
+The user wants the first 8 prime numbers, comma separated.
+
+Prime numbers are natural numbers greater than 1 that have no positive divisors other than 1 and themselves.
+
+The first 8 prime numbers:
+1. 2
+2. 3
+3. 5
+4. 7
+5. 11
+6. 13
+7. 17
+8. 19
+
+So the answer is: 2, 3, 5,
+
+### Q4 "Write one sentence explaining what a GPU is."
+FINISH: length | tokens: 96
+The user wants a single sentence explaining what a GPU is. This is a simple, factual request. Let me think about what a GPU is:
+
+A GPU (Graphics Processing Unit) is a specialized electronic circuit/processor designed to rapidly manipulate and alter memory to accelerate the creation of images in a frame buffer intended for output to a display device. More broadly, GPUs are now used for parallel processing tasks beyond graphics, including machine learning, scientific computing, and cryptocurrency mining.
+
+Key elements to
+

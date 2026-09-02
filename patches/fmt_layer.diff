@@ -1,0 +1,25 @@
+--- /opt/dlami/nvme/patch/orig/fmt_layer.py	2026-09-01 01:29:49.000000000 +0000
++++ /opt/dlami/nvme/patch/fmt_layer.py	2026-09-01 09:11:38.705248970 +0000
+@@ -242,6 +242,22 @@
+     if not get_moe_a2a_backend().is_deepep_v2():
+         return
+ 
++    # LOCAL EXPERIMENT ONLY (Kimi-K3 MXFP4 on deepep_v2).  This gate is stricter
++    # than the kernels behind it: both v2 runner paths already carry an
++    # is_fp4_experts branch (recipe_a=(1,128), recipe_b=(1,32)) --
++    # moe_runner/deep_gemm.py:343 contiguous and :646 masked -- and the v2
++    # dispatcher emits per-token 128-group fp8 activations, which IS recipe_a.
++    # Mxfp4MoEMethod.apply() builds DeepGemmMoeQuantInfo(is_fp4_experts=True).
++    # Let it through to find out empirically.  Numerics MUST be validated against
++    # a --moe-a2a-backend deepep baseline.
++    try:
++        from sglang.srt.layers.quantization.mxfp4 import Mxfp4MoEMethod
++    except Exception:
++        Mxfp4MoEMethod = ()
++    if Mxfp4MoEMethod and isinstance(quant_method, Mxfp4MoEMethod):
++        if get_moe_runner_backend().is_deep_gemm():
++            return
++
+     config = (
+         quant_method.quant_config if isinstance(quant_method, Fp8MoEMethod) else None
+     )
