@@ -12,18 +12,21 @@ source ./env_common.sh
 
 NAME="${NAME:-kimi-k3}"
 build_cache_args "/tmp/symm_allocator=symm_allocator"
+build_gdr_args
 
 docker rm -f "$NAME" 2>/dev/null || true
 
 # --net=host: the 18 EFA rails and the ENA interface must be visible as-is for
 #   NCCL/Mooncake device discovery; a bridge network breaks rail selection.
 # --device=/dev/infiniband + memlock=-1: required for EFA RDMA registration.
+# --device=/dev/gdrdrv (via GDR_ARGS): GDRCopy, otherwise NCCL falls back.
 # --shm-size=600g: TP=8 loading 1.5 TB of shards moves a lot through /dev/shm.
 docker run -d --name "$NAME" \
     --gpus all \
     --net=host --ipc=host \
     --ulimit memlock=-1 --ulimit stack=67108864 \
     --device=/dev/infiniband \
+    ${GDR_ARGS[@]+"${GDR_ARGS[@]}"} \
     --shm-size=600g \
     -v "$HOST_MODEL_DIR/Kimi-K3:/models/Kimi-K3:ro" \
     -v "$HOST_MODEL_DIR/Kimi-K3-DSpark:/models/Kimi-K3-DSpark:ro" \

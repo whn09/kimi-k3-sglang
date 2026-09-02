@@ -10,6 +10,7 @@ source ./env_common.sh
 
 NAME="${NAME:-kimi-k3-prefill}"
 build_cache_args
+build_gdr_args
 
 # Unmapping ~1.5 TB of model volumes can outlast a single `rm -f`, leaving the
 # container Exited-but-present and the next `docker run` failing with "container
@@ -31,7 +32,7 @@ docker run -d --name "$NAME" \
     --gpus all \
     --net=host --ipc=host \
     --ulimit memlock=-1 --ulimit stack=67108864 \
-    --device=/dev/infiniband --privileged \
+    --device=/dev/infiniband ${GDR_ARGS[@]+"${GDR_ARGS[@]}"} --privileged \
     --shm-size=600g \
     -v "$HOST_MODEL_DIR/Kimi-K3:/models/Kimi-K3:ro" \
     -v "$HOST_MODEL_DIR/Kimi-K3-DSpark:/models/Kimi-K3-DSpark:ro" \

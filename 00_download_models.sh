@@ -17,7 +17,10 @@ DRAFT_REPO="RadixArk/Kimi-K3-DSpark"
 
 source /opt/pytorch/bin/activate
 export HF_HOME="$HF_HOME_DIR"
-export HF_HUB_ENABLE_HF_TRANSFER=1
+# huggingface_hub now routes these repos through Xet, which ignores
+# HF_HUB_ENABLE_HF_TRANSFER (it warns that the variable is deprecated). This is
+# the replacement knob; measured ~6 GB/s on the 96-shard main repo.
+export HF_XET_HIGH_PERFORMANCE=1
 # 96 shards @ ~17 GB; 16 workers saturates the instance's network without
 # thrashing the NVMe.
 export HF_HUB_DOWNLOAD_TIMEOUT=60

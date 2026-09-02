@@ -41,6 +41,25 @@ build_cache_args() {
     done
 }
 
+# Fills GDR_ARGS with the /dev/gdrdrv device flag when the host has the gdrdrv
+# module loaded. Without it aws-ofi-nccl logs "NET/OFI Failed to initialize
+# GDRCopy: Failed to open gdr handle" and falls back to a slower host-memory
+# path. The PD launchers happened to get the device for free because
+# --privileged bind-mounts the host's whole /dev; standalone does not, so it was
+# the only one actually running without GDRCopy. Conditional because the module
+# is not loaded on every host (see feedback_gdrdrv_after_kernel_upgrade: DKMS
+# has to be rebuilt after a kernel upgrade, and there is no udev rule), and a
+# missing --device makes docker run fail outright.
+build_gdr_args() {
+    GDR_ARGS=()
+    if [[ -c /dev/gdrdrv ]]; then
+        GDR_ARGS+=(--device=/dev/gdrdrv)
+    else
+        echo "WARN: /dev/gdrdrv missing -- NCCL will run without GDRCopy." >&2
+        echo "      Check: lsmod | grep gdrdrv ; sudo mknod /dev/gdrdrv c \$(awk '/gdrdrv/{print \$1}' /proc/devices) 0" >&2
+    fi
+}
+
 # ---- paths (inside container) ----
 MODEL_PATH="${MODEL_PATH:-/models/Kimi-K3}"
 DRAFT_MODEL_PATH="${DRAFT_MODEL_PATH:-/models/Kimi-K3-DSpark}"
@@ -128,8 +147,10 @@ PORT="${PORT:-30000}"
 # ---- cluster ----
 # Primary ENA interface (the other 16 enpXX are EFA-only rails).
 PRIMARY_IFACE="${PRIMARY_IFACE:-enp71s0}"
-B300_1_IP="${B300_1_IP:-172.31.60.28}"   # P6-B300-1
-B300_2_IP="${B300_2_IP:-172.31.51.133}"  # P6-B300-2
+# These are re-assigned on every instance restart -- re-check with
+# `ssh P6-B300-N hostname -I` before a PD run, or bootstrap silently times out.
+B300_1_IP="${B300_1_IP:-172.31.57.229}"  # P6-B300-1 (as of 2026-08-14)
+B300_2_IP="${B300_2_IP:-172.31.61.182}"  # P6-B300-2 (as of 2026-08-14)
 
 # PD disaggregation
 PREFILL_IP="${PREFILL_IP:-$B300_1_IP}"
