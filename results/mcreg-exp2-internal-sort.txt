@@ -1,0 +1,5 @@
+input=layer  internal_sort=none  cap=16  ranks=8/8  slowest=41994ms  mean=39484ms
+input=layer  internal_sort=asc   cap=16  ranks=8/8  slowest=34742ms  mean=33877ms
+input=desc   internal_sort=none  cap=16  ranks=8/8  slowest=101255ms  mean=96191ms
+input=desc   internal_sort=asc   cap=16  ranks=8/8  slowest=32766ms  mean=31783ms
+=== done ===

@@ -1,0 +1,26 @@
+Warning: Permanently added 'ec2-18-189-225-222.us-east-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+cap=unset  global=~unbounded  ranks=8/8  slowest=107988ms  mean=106955ms  rc=0
+cap=128    global=1024        ranks=8/8  slowest=186343ms  mean=184394ms  rc=0
+cap=64     global=512         ranks=8/8  slowest=183820ms  mean=179585ms  rc=0
+cap=32     global=256         ranks=8/8  slowest=129667ms  mean=126328ms  rc=0
+cap=16     global=128         ranks=8/8  slowest=95198ms  mean=91790ms  rc=0
+cap=8      global=64          ranks=8/8  slowest=106595ms  mean=104000ms  rc=0
+cap=4      global=32          ranks=8/8  slowest=157301ms  mean=154136ms  rc=0
+=== done ===
+cap=16     global=128         ranks=8/8  slowest=97893ms  mean=94874ms  rc=0
+cap=unset  global=~unbounded  ranks=8/8  slowest=98638ms  mean=97161ms  rc=0
+cap=64     global=512         ranks=8/8  slowest=208477ms  mean=201748ms  rc=0
+cap=16     global=128         ranks=8/8  slowest=96749ms  mean=92598ms  rc=0
+cap=unset  global=~unbounded  ranks=8/8  slowest=128050ms  mean=126715ms  rc=0
+=== done ===
+order=layer  cap=64     global=512         ranks=8/8  slowest=100594ms  mean=99005ms  rc=0
+order=layer  cap=16     global=128         ranks=8/8  slowest=43077ms  mean=41085ms  rc=0
+order=layer  cap=unset  global=~unbounded  ranks=8/8  slowest=112379ms  mean=111188ms  rc=0
+=== done ===
+order=asc    cap=64     global=512         ranks=8/8  slowest=59996ms  mean=58043ms  rc=0
+order=asc    cap=16     global=128         ranks=8/8  slowest=36234ms  mean=35656ms  rc=0
+order=asc    cap=unset  global=~unbounded  ranks=8/8  slowest=119940ms  mean=118714ms  rc=0
+=== done ===
+order=asc    cap=16     global=128         ranks=8/8  slowest=37363ms  mean=36350ms  rc=0
+order=asc    cap=8      global=64          ranks=8/8  slowest=44134ms  mean=42863ms  rc=0
+=== done ===

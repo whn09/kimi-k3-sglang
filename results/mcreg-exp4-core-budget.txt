@@ -1,0 +1,13 @@
+A   nranks=8 cores=0   cap=8      threads=64    ranks=8/8 slowest=106684ms mean=101698ms rc=0
+A   nranks=8 cores=0   cap=16     threads=128   ranks=8/8 slowest=99789ms mean=92694ms rc=0
+A   nranks=8 cores=0   cap=32     threads=256   ranks=8/8 slowest=127764ms mean=118658ms rc=0
+A   nranks=8 cores=0   cap=64     threads=512   ranks=8/8 slowest=182645ms mean=177056ms rc=0
+B   nranks=4 cores=0   cap=8      threads=32    ranks=4/4 slowest=109050ms mean=105011ms rc=0
+B   nranks=4 cores=0   cap=16     threads=64    ranks=4/4 slowest=100421ms mean=98695ms rc=0
+B   nranks=4 cores=0   cap=32     threads=128   ranks=4/4 slowest=89208ms mean=85447ms rc=0
+B   nranks=4 cores=0   cap=64     threads=256   ranks=4/4 slowest=120589ms mean=117193ms rc=0
+C   nranks=8 cores=64  cap=4      threads=32    ranks=8/8 slowest=155086ms mean=153171ms rc=0
+C   nranks=8 cores=64  cap=8      threads=64    ranks=8/8 slowest=121326ms mean=113504ms rc=0
+C   nranks=8 cores=64  cap=16     threads=128   ranks=8/8 slowest=164663ms mean=155239ms rc=0
+C   nranks=8 cores=64  cap=32     threads=256   ranks=8/8 slowest=263829ms mean=258666ms rc=0
+=== done ===

@@ -1,0 +1,10 @@
+host=ip-172-31-15-103 nics=32 cores=192
+blocks=128 x 2GB  order: 8 128 32 4 64 16
+started=2026-07-30T04:46:34Z
+cap=8      registered 128 buffers on 8 threads in 70885ms       pages: page_size=4096 
+cap=128    registered 128 buffers on 128 threads in 274552ms    pages: page_size=4096 
+cap=32     registered 128 buffers on 32 threads in 89591ms      pages: page_size=4096 
+cap=4      registered 128 buffers on 4 threads in 257402ms      pages: page_size=4096 
+cap=64     registered 128 buffers on 64 threads in 119962ms     pages: page_size=4096 
+cap=16     registered 128 buffers on 16 threads in 59117ms      pages: page_size=4096 
+finished=2026-07-30T05:15:10Z
