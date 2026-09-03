@@ -78,50 +78,80 @@ fi
 CG_ARGS=()
 [[ -n "${CGMAXBS:-}" ]] && CG_ARGS=(--cuda-graph-max-bs-decode "$CGMAXBS")
 
-# Fail here, not after a 10-minute weight load. The decode-side half of
-# validate_deepep_v2_dispatch_token_budget (moe_hook.py:375-410) is
-#     graph_bs * tokens_per_req <= CAP
-# and SPECULATIVE DECODING IS WHAT MAKES THIS BITE. With spec off, tokens_per_req
-# is 1, so even CAP=256 admits a batch of 256 and the check is invisible. With
-# DSPARK block size 7 each request carries ~8 tokens per step, so the largest
-# captured batch must be <= CAP/8: CAP=1024 -> 128 (fine at sglang's defaults),
-# but CAP=256 -> 32, which the default captured list blows straight past.
+# Bounds the decode batch. Left unset, DSPARK forces 48
+# (speculative_hook.py:506-514, with a warning), and 48 is what makes a small CAP
+# explode -- see the budget check below.
+RUN_ARGS=()
+[[ -n "${MAXRUN:-}" ]] && RUN_ARGS=(--max-running-requests "$MAXRUN")
+
+# Fail here, not after a 10-minute weight load, and not mid-benchmark. TWO checks
+# read the decode CAP and they are not the same check:
 #
-# So the "smaller CAP is faster" experiment (on DSV4/B300, 2048 -> 256 was -16%
-# step / +18% tok/s) is only reachable on this model by ALSO pinning CGMAXBS.
-# Untested on K3; run it as DECODE_CAP=256 DECODE_CGMAXBS=32.
-if [[ "${MOE_A2A_BACKEND:-none}" != "none" && -n "${CGMAXBS:-}" ]]; then
+#   boot     moe_hook.py:400-413   graph_bs * tokens_per_req <= CAP, where
+#                                  graph_bs = min(cuda_graph_max_bs_decode,
+#                                  max_running_requests // attn_dp_size)
+#   RUNTIME  deepep_v2.py:257      hidden_states.shape[0] > CAP -> ValueError,
+#                                  evaluated on EVERY forward
+#
+# The runtime one is the dangerous one: it does not fall back to eager, it fails
+# the request, and it fires long after startup looked clean. Passing the boot
+# check is therefore NOT sufficient -- graph_bs only describes the CAPTURED
+# shapes, while the runtime check sees the batch the scheduler actually built.
+#
+# decode.py:2609 builds that batch as min(req_to_token_pool.size,
+# max_running_requests) -- and the +extra_slots+1 at pool_configurator.py:940
+# sizes the POOL, not the batch -- so the sufficient rule is
+#
+#     max_running_requests * tokens_per_req <= CAP
+#
+# which also implies the boot check. SPECULATIVE DECODING IS WHAT MAKES THIS
+# BITE: tokens_per_req is block_size + 1 (verified, not guessed --
+# speculative_hook.py:479-494 resolves speculative_num_draft_tokens = gamma + 1,
+# and overrides.py:1869 feeds exactly that to the budget check), so DSPARK
+# block 7 costs 8 tokens per request per step. With spec off it is 1 and none of
+# this is reachable.
+#
+# Worked defaults: CAP=1024 with DSPARK's 48 needs 384 <= 1024, fine, which is
+# why the shipped default needs no MAXRUN at all. CAP=128 needs
+# max_running_requests <= 16 and ALSO CGMAXBS >= 16 to stay captured.
+if [[ "${MOE_A2A_BACKEND:-none}" != "none" ]]; then
     cap="${SGLANG_DEEPEP_V2_NUM_MAX_DISPATCH_TOKENS_PER_RANK:-128}"
-    # block_size + 1 is the conservative reading of DSPARK's tokens per step; if
-    # sglang turns out to use block_size itself this check is one step strict,
-    # which is the harmless direction.
     tpr=1
     [[ "${NO_SPEC:-0}" != "1" ]] && tpr=$(( ${SPEC_BLOCK_SIZE:-7} + 1 ))
-    need=$(( CGMAXBS * tpr ))
-    if (( need > cap )); then
-        echo "ERROR: DeepEP v2 budget: cuda-graph-max-bs-decode ($CGMAXBS)" >&2
-        echo "       x tokens_per_req ($tpr) = $need > CAP ($cap)." >&2
-        echo "       Either raise DECODE_CAP to >= $need, or lower DECODE_CGMAXBS" >&2
-        echo "       to <= $(( cap / tpr )), or set NO_SPEC=1." >&2
-        exit 1
+    # DSPARK's own default when we do not pass one. Keep in sync with
+    # speculative_hook.py:_handle_dspark.
+    eff_run="${MAXRUN:-}"
+    if [[ -z "$eff_run" ]]; then
+        [[ "${NO_SPEC:-0}" != "1" ]] && eff_run=48 || eff_run=""
     fi
-fi
-# The check above can only run when CGMAXBS is pinned. Left unset, sglang picks
-# the captured list itself and this script cannot pre-compute graph_bs, so the
-# same budget is enforced only by sglang -- as an abort AFTER the weight load.
-# It has fit so far (the observed default list tops out at bs=104, and
-# 104 x 8 = 832 <= 1024), but that is a property of a default we do not control.
-if [[ "${MOE_A2A_BACKEND:-none}" != "none" && -z "${CGMAXBS:-}" && "${NO_SPEC:-0}" != "1" ]]; then
-    echo "NOTE: CGMAXBS unset with speculative decoding on, so the" \
-         "graph_bs*tokens_per_req <= CAP budget is unchecked here." >&2
-    echo "      If startup aborts on the DeepEP v2 token budget, pin" \
-         "DECODE_CGMAXBS <= $(( ${SGLANG_DEEPEP_V2_NUM_MAX_DISPATCH_TOKENS_PER_RANK:-128} / (${SPEC_BLOCK_SIZE:-7} + 1) ))." >&2
+    if [[ -n "$eff_run" ]]; then
+        need=$(( eff_run * tpr ))
+        if (( need > cap )); then
+            if [[ -n "${MAXRUN:-}" ]]; then src="from DECODE_MAXRUN"; else src="DSPARK default"; fi
+            echo "ERROR: DeepEP v2 decode budget: max_running_requests ($eff_run, $src)" >&2
+            echo "       x tokens_per_req ($tpr) = $need > CAP ($cap)." >&2
+            echo "       deepep_v2.py:257 raises on the first forward that big." >&2
+            echo "       Either raise DECODE_CAP to >= $need, or set" >&2
+            echo "       DECODE_MAXRUN <= $(( cap / tpr )), or set NO_SPEC=1." >&2
+            exit 1
+        fi
+        # Legal for the a2a but uncaptured: the quiet failure mode, ~255 ms/step.
+        if [[ -n "${CGMAXBS:-}" ]] && (( CGMAXBS < eff_run )); then
+            echo "WARNING: CGMAXBS ($CGMAXBS) < max_running_requests ($eff_run):" \
+                 "batches above $CGMAXBS are legal but run EAGER (~255 ms/step)." >&2
+            echo "         Set DECODE_CGMAXBS >= $eff_run." >&2
+        fi
+    else
+        echo "NOTE: neither DECODE_MAXRUN nor speculative decoding is set, so the" \
+             "decode batch is bounded only by the request pool; the" \
+             "tokens <= CAP ($cap) budget is unchecked here." >&2
+    fi
 fi
 
 echo "=== Kimi-K3 DECODE: TP=${TP_SIZE} ep=${EP_SIZE:-1} a2a=${MOE_A2A_BACKEND:-none}" \
      "cap=${SGLANG_DEEPEP_V2_NUM_MAX_DISPATCH_TOKENS_PER_RANK:-n/a}" \
      "gin=${NCCL_GIN_TYPE:-unset} graphs=ON max-bs=${CGMAXBS:-<sglang default>}" \
-     "dcp=${DCP_SIZE:-8} mem=${MEM_FRACTION:-0.85} ==="
+     "max-run=${MAXRUN:-<DSPARK 48>} dcp=${DCP_SIZE:-8} mem=${MEM_FRACTION:-0.85} ==="
 
 exec python3 -m sglang.launch_server \
     --model-path "$MODEL_PATH" \
@@ -143,6 +173,7 @@ exec python3 -m sglang.launch_server \
     "${SYMM_ARGS[@]}" \
     "${EP_ARGS[@]}" \
     "${CG_ARGS[@]}" \
+    "${RUN_ARGS[@]}" \
     --host 0.0.0.0 \
     --port "$PORT" \
     --decode-log-interval 1 \

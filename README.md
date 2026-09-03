@@ -398,6 +398,64 @@ not something CAP recovers — v2 is for large-EP shapes. Today's plain-TP arm a
 reproduces the profile-matrix reference row above (2162.7 / 2158.1) to +6 %,
 which is what validates the whole comparison as same-口径.
 
+### Decode CAP: what makes a small one legal (and what silently breaks)
+
+Untested territory — this section is the constraint, not a result. On DSV4/B300
+dropping the decode capacity 2048 → 256 was −16 % step time / +18 % tok/s, so a
+small decode CAP is worth measuring on K3 too. Getting there needs one more knob
+than it looks, because **two different checks read the decode CAP**:
+
+| where | check | when it fires |
+|---|---|---|
+| `moe_hook.py:400-413` | `graph_bs * tokens_per_req <= CAP` | at startup, before weight load |
+| `deepep_v2.py:257` | `tokens_this_forward > CAP` → `ValueError` | **every forward, at runtime** |
+
+Passing the startup check is *not* sufficient. `graph_bs` only describes the
+captured shapes; the runtime check sees the batch the scheduler actually built.
+And it does not degrade to eager — it fails the request, minutes into a run that
+started clean. `decode.py:2609` builds that batch as
+`min(req_to_token_pool.size, max_running_requests)` (the `+extra_slots+1` in
+`pool_configurator.py:940` sizes the *pool*, not the batch), so the sufficient
+rule — which also implies the startup check, since `moe_hook.py` clamps `graph_bs`
+by `max_running_requests` anyway — is:
+
+```
+max_running_requests * (SPEC_BLOCK_SIZE + 1) <= DECODE_CAP
+```
+
+**Speculative decoding is what makes this bite.** `tokens_per_req` is
+`block_size + 1` — `speculative_hook.py:479-494` resolves
+`speculative_num_draft_tokens = gamma + 1`, and `overrides.py:1869` feeds exactly
+that to the budget check — so DSPARK block 7 costs 8 tokens per request per step.
+With `NO_SPEC=1` it is 1 and none of this is reachable.
+
+The trap: **DSPARK rewrites `max_running_requests` to 48 when nothing is passed**
+(`speculative_hook.py:506-514`). 48 × 8 = 384, which fits the shipped `CAP=1024`
+and is why the default needs no tuning — and which makes `CAP=128` fail on step
+one no matter what `--cuda-graph-max-bs-decode` says. Hence `DECODE_MAXRUN`.
+
+| DECODE_CAP | DECODE_MAXRUN | DECODE_CGMAXBS | outcome |
+|---|---|---|---|
+| 1024 | *(unset → 48)* | *(unset)* | 384 ≤ 1024 — the shipped default |
+| 128 | *(unset → 48)* | 16 | aborts at launch, 384 > 128 |
+| 128 | 16 | 16 | legal: 16 × 8 = 128 ≤ 128, captured to bs=16 |
+| 128 | 16 | *(unset)* | legal — sglang's list is clamped to 16 anyway |
+| 128 | 32 | 32 | aborts at launch, 256 > 128 |
+
+`start_decode.sh` now enforces the rule before the weight load and warns on the
+one combination that is quiet rather than loud: `CGMAXBS < MAXRUN`, where the
+batch is legal for the a2a but runs uncaptured at ~255 ms/step.
+
+Two things to hold equal when comparing two decode CAPs, or the arms differ on
+more than one axis: `DECODE_MAXRUN` (a small CAP forces a small one, so the
+larger-CAP control must be given the same value rather than DSPARK's 48), and
+`DECODE_CHUNK` (it defaults to CAP, and although a decode node's chunk is never
+checked against CAP — `moe_hook.py:376` skips the prefill half when
+`disaggregation_mode == "decode"` — letting it track CAP moves a second knob).
+`DECODE_MAXRUN` is in the filename for that reason. Note that a lower
+`max_running_requests` caps server-side concurrency, so a `CAP=128` row measures
+CAP *and* an admission limit unless the control shares it.
+
 ### Mooncake vs NIXL: KV transfer is at parity, startup is not
 
 Same workload point, PD low-latency, two runs each, all four on one container

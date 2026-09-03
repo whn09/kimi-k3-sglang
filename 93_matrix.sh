@@ -28,6 +28,12 @@ DECODE_HOST="${DECODE_HOST:-P6-B300-2}"
 REMOTE="${REMOTE:-/home/ubuntu/kimi-k3-sglang}"
 
 REPEATS="${REPEATS:-2}"
+# A discarded first run. NOT optional politeness: deep_gemm JIT-compiles inside
+# the timed region on the first bench at a given shape, and it faked a 78%
+# throughput effect once already (see project_k3_pd_prefill_cap_knee). Warm runs
+# measured 6-9% low across all five CAP rows. It is tagged r0 so it lands in
+# results/ under its own name and cannot be mistaken for a timed replicate.
+WARMUP="${WARMUP:-1}"
 ISL="${ISL:-8192}"
 OSL="${OSL:-1024}"
 NUM_PROMPTS="${NUM_PROMPTS:-64}"
@@ -46,7 +52,28 @@ mkdir -p "$LOCAL_RESULTS"
 MTAG=""
 if [[ "${MOE_A2A_BACKEND:-none}" != "none" ]]; then
     MTAG="-${MOE_A2A_BACKEND}-p${PREFILL_CAP}d${DECODE_CAP}s${STANDALONE_CAP}"
+    # DECODE_MAXRUN is a second axis, not a detail of DECODE_CAP: a small CAP is
+    # only legal with a small max_running_requests, so "CAP=128" and "CAP=512"
+    # rows are not comparable unless MAXRUN is held equal -- which means it has to
+    # be visible in the name of every file, or one arm silently overwrites the
+    # other. Empty (DSPARK's own 48) leaves names unchanged.
+    [[ -n "${DECODE_MAXRUN:-}" ]] && MTAG="${MTAG}-mr${DECODE_MAXRUN}"
 fi
+
+# Knobs the driver resolves locally but the launchers read from THEIR OWN
+# environment: without this list `DECODE_CAP=128 bash 93_matrix.sh` verifies 128
+# locally, launches 1024 remotely, and assert_cap skips the config -- a 40-minute
+# no-op. Only non-empty values are forwarded so unset stays unset.
+fwd() {
+    local v out=""
+    for v in PREFILL_CAP PREFILL_CHUNK DECODE_CAP DECODE_CHUNK DECODE_MAXRUN \
+             DECODE_CGMAXBS STANDALONE_CAP MOE_A2A_BACKEND EP_SIZE \
+             DEEPEP_V2_MODE MOE_RUNNER_BACKEND SPEC_BLOCK_SIZE NO_SPEC; do
+        [[ -n "${!v:-}" ]] && out="$out $v=${!v}"
+    done
+    echo "$out"
+}
+FWD="$(fwd)"
 SUMMARY="$LOCAL_RESULTS/matrix-isl${ISL}-osl${OSL}-c${CONCURRENCY}${MTAG}.txt"
 
 say() { echo "$@" | tee -a "$SUMMARY"; }
@@ -127,6 +154,8 @@ run_bench() {
     if [[ "${w_a2a:-none}" != "none" ]]; then
         if [[ "$mode" == "pd" ]]; then
             tag="${tag}-${w_a2a}-p${w_pcap}d${w_dcap}"
+            # See MTAG: MAXRUN is an independent axis of the decode arm.
+            [[ -n "${DECODE_MAXRUN:-}" ]] && tag="${tag}-mr${DECODE_MAXRUN}"
         else
             tag="${tag}-${w_a2a}-cap${w_scap}"
         fi
@@ -180,8 +209,8 @@ for cfg in $CONFIGS; do
     if [[ "$mode" == "pd" ]]; then
         # Launch both nodes before waiting on either: they rendezvous over the
         # bootstrap port, and each takes minutes to load 1.5 TB of weights.
-        ssh "$PREFILL_HOST" "cd $REMOTE && PROFILE=$profile TRANSFER_BACKEND=$BACKEND bash 20_launch_prefill.sh" 2>&1 | tee -a "$SUMMARY"
-        ssh "$DECODE_HOST"  "cd $REMOTE && PROFILE=$profile TRANSFER_BACKEND=$BACKEND bash 21_launch_decode.sh"  2>&1 | tee -a "$SUMMARY"
+        ssh "$PREFILL_HOST" "cd $REMOTE && PROFILE=$profile TRANSFER_BACKEND=$BACKEND$FWD bash 20_launch_prefill.sh" 2>&1 | tee -a "$SUMMARY"
+        ssh "$DECODE_HOST"  "cd $REMOTE && PROFILE=$profile TRANSFER_BACKEND=$BACKEND$FWD bash 21_launch_decode.sh"  2>&1 | tee -a "$SUMMARY"
         wait_ready "$PREFILL_HOST" "$PORT" "prefill" || continue
         wait_ready "$DECODE_HOST"  "$PORT" "decode"  || continue
 
@@ -196,6 +225,14 @@ for cfg in $CONFIGS; do
             # doing DeepEP v2 under PD -- so both get checked, separately.
             assert_cap "$PREFILL_HOST" kimi-k3-prefill "$w_pcap" || continue
             assert_cap "$DECODE_HOST"  kimi-k3-decode  "$w_dcap" || continue
+            # Unlike CAP, this one IS in server_args, so read it back rather than
+            # trusting the flag. It decides whether the a2a budget holds at all
+            # (max_running_requests * tokens_per_req <= CAP, deepep_v2.py:257), and
+            # DSPARK silently rewrites it to 48 when nothing is passed -- so an
+            # unforwarded DECODE_MAXRUN looks identical to a set one in the logs.
+            if [[ -n "${DECODE_MAXRUN:-}" ]]; then
+                assert_arg "$DECODE_HOST" kimi-k3-decode max_running_requests "$DECODE_MAXRUN" || continue
+            fi
         fi
 
         # The router is the easiest thing to forget: without it the bench still
@@ -204,7 +241,7 @@ for cfg in $CONFIGS; do
         wait_ready "$PREFILL_HOST" "$ROUTER_PORT" "router" || continue
         bench_host="$PREFILL_HOST"; endpoint="localhost:$ROUTER_PORT"
     else
-        ssh "$PREFILL_HOST" "cd $REMOTE && PROFILE=$profile bash 10_launch_standalone.sh" 2>&1 | tee -a "$SUMMARY"
+        ssh "$PREFILL_HOST" "cd $REMOTE && PROFILE=$profile$FWD bash 10_launch_standalone.sh" 2>&1 | tee -a "$SUMMARY"
         wait_ready "$PREFILL_HOST" "$PORT" "standalone" || continue
 
         assert_arg "$PREFILL_HOST" kimi-k3 dcp_size "$w_sdcp" || continue
@@ -214,6 +251,8 @@ for cfg in $CONFIGS; do
         bench_host="$PREFILL_HOST"; endpoint="localhost:$PORT"
     fi
 
+    [[ "$WARMUP" == "1" ]] && { say "----- warmup (DISCARDED) -----"; \
+        run_bench "$bench_host" "$endpoint" "$mode" "$profile" 0; }
     for r in $(seq 1 "$REPEATS"); do
         run_bench "$bench_host" "$endpoint" "$mode" "$profile" "$r"
     done

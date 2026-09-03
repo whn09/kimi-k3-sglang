@@ -232,10 +232,29 @@ fi
 # a2a moves less. Untested on K3. To try it, see DECODE_CGMAXBS below -- 256 is
 # NOT reachable at the default graph batch sizes with speculative decoding on.
 DECODE_CAP="${DECODE_CAP:-1024}"
-# Decode still needs a chunked-prefill size that passes the same boot check, even
-# though it does no real prefill. Whether that check is gated on
-# --disaggregation-mode is unverified; pinning it to CAP makes the question moot.
+# Decode still needs a chunked-prefill size, even though it does no real prefill.
+# 2026-09-03: the "is the prefill-budget check gated on --disaggregation-mode"
+# question is now ANSWERED -- moe_hook.py:376 is `if view.disaggregation_mode !=
+# "decode":`, so a decode node's chunk is NOT checked against CAP and this may be
+# set freely. It still defaults to CAP so the two never drift by accident, but
+# WHEN COMPARING TWO DECODE CAPs, PIN THIS TO THE SAME VALUE IN BOTH ARMS --
+# otherwise the arms differ on two axes and the chunk (inert here) gets the credit.
 DECODE_CHUNK="${DECODE_CHUNK:-$DECODE_CAP}"
+# THE BOUND THAT ACTUALLY DECIDES WHETHER A SMALL DECODE CAP WORKS. Two separate
+# checks read the same CAP, and only the first one is a boot check:
+#   boot    moe_hook.py:400-413    graph_bs * tokens_per_req <= CAP
+#   RUNTIME deepep_v2.py:257       tokens_this_forward > CAP -> raise ValueError
+# The runtime one is per-forward and it does NOT degrade to eager -- it kills the
+# request. decode.py:2609 bounds the PD decode batch at
+# `min(req_to_token_pool.size, max_running_requests)` (the +extra_slots+1 in
+# pool_configurator.py:940 grows the POOL, not the batch), so the safe rule is
+#     max_running_requests * (SPEC_BLOCK_SIZE + 1) <= DECODE_CAP
+# and it implies the boot check, because moe_hook.py clamps graph_bs by
+# max_running_requests // attn_dp_size anyway.
+# Empty = let DSPARK pick, and DSPARK picks 48 (speculative_hook.py:506-514).
+# 48 * 8 = 384 <= 1024, which is exactly why the default CAP needs no MAXRUN --
+# and why CAP=128 cannot work without one (384 > 128 would raise on step one).
+DECODE_MAXRUN="${DECODE_MAXRUN:-}"
 # Caps the captured decode batch-size list (--cuda-graph-max-bs-decode; the old
 # --cuda-graph-max-bs is a deprecated alias). It does NOT save memory -- the
 # capture pool is sized by CAP, not by how many shapes are captured (measured:
@@ -244,7 +263,9 @@ DECODE_CHUNK="${DECODE_CHUNK:-$DECODE_CAP}"
 # capture, and (b) satisfy `graph_bs * tokens_per_req <= CAP`, which is what makes
 # a small DECODE_CAP legal. Empty = sglang's default list.
 # Keep it ABOVE the achievable decode batch or large batches silently fall out of
-# the graph and back to a ~255 ms step.
+# the graph and back to a ~255 ms step -- i.e. set it >= DECODE_MAXRUN. Setting it
+# BELOW DECODE_MAXRUN is the one combination that is silently slow rather than
+# loud: the batch is legal for the a2a but uncaptured.
 DECODE_CGMAXBS="${DECODE_CGMAXBS:-}"
 
 # STANDALONE (unified server) is the arm that has to satisfy BOTH constraints
