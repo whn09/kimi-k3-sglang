@@ -196,7 +196,22 @@ MOE_RUNNER_BACKEND="${MOE_RUNNER_BACKEND:-deep_gemm}"
 #   and enables symm-mem, so it has less headroom and CAP=2048 is UNTESTED there.
 #   If it OOMs after "Load weight", drop to 1024 -- that costs prefill throughput,
 #   not correctness.
-PREFILL_CAP="${PREFILL_CAP:-2048}"
+#   2026-09-03 UPDATE, and it changes the default: at the README operating point
+#   (ISL 8192 / OSL 1024 / 64 prompts / c32, PD low-latency, 2x p6-b300) CAP=2048
+#   costs 2.6x. Measured, 2 timed runs each after a discarded warmup:
+#       2048 -> 688 tok/s, mean TTFT 31.4 s
+#       4096 -> 1244             14.1 s
+#       8192 -> 1767              6.6 s     <-- +158% over 2048
+#      16384 -> 1790              6.5 s     (+0.9%, i.e. nothing)
+#   The knee is exactly ISL: once chunk >= ISL the request stops being chunked and
+#   more CAP only grows the ElasticBuffer. 16384 booted fine, so the OOM caveat
+#   below is a standalone-arm concern, not a PD-prefill one -- prefill runs
+#   --disable-cuda-graph and has no capture pool to compete with.
+#   SO: SET THIS TO AT LEAST THE ISL YOU SERVE. 8192 is the default because the
+#   documented workload is ISL 8192; it is NOT a value to sweep.
+#   Caveat that stays: validated on PROFILE=low-latency (dcp=1) only. The dcp=8
+#   profiles have a different memory split and are untested at 8192.
+PREFILL_CAP="${PREFILL_CAP:-8192}"
 # CHUNK must satisfy CHUNK/dp_size <= CAP, and dp_size is 1 here, so CHUNK==CAP.
 # Note this is a big cut from the pre-DeepEP default of 16384: that is the price
 # of the v2 dispatcher, not a tuning mistake -- so the plain-TP baseline keeps the
@@ -251,29 +266,48 @@ fi
 # nothing crosses the wire. Without --device=/dev/infiniband NCCL sees no network
 # at all and reports NONE.
 #
-# The two boxes this repo has run on need DIFFERENT types, and picking wrong is
-# a startup abort, so detect rather than hardcode:
-#   5 = EFA_GDA   p6-b300 on AWS with EFA (the 16 efa rails)
-#   3 = GDAKI     InfiniBand/DOCA only -- this is what the earlier B300-KR box
-#                 used, where there was no EFA device at all, just 2x
-#                 ConnectX-7 (MT2910, link_layer InfiniBand). There the two HCAs
-#                 sat on two IB planes with NO path between them (ibv_rc_pingpong
-#                 across them failed with "transport retry counter exceeded"),
-#                 which is why NCCL_IB_HCA has to pin exactly one.
-# GIN_TYPE=5 on p6-b300 is UNVERIFIED -- EFA GDA is confirmed on p5en (gen-2 EFA)
-# but not on this generation's factory stack. If DeepEP v2 aborts at startup on
-# the GIN assert, that is the first thing to look at, and NCCL_DEBUG_SUBSYS=GIN
-# prints which backend was actually selected.
+# The two backends this repo has run on:
+#   3 = GDAKI     InfiniBand/DOCA. The earlier B300-KR box had ONLY this (2x
+#                 ConnectX-7 MT2910, link_layer InfiniBand, no EFA device at
+#                 all). Its two HCAs sat on two IB planes with NO path between
+#                 them (ibv_rc_pingpong across them failed with "transport retry
+#                 counter exceeded"), which is why NCCL_IB_HCA must pin exactly
+#                 one plane.
+#   5 = EFA_GDA   AWS EFA. Confirmed working on p5en (gen-2 EFA, 0xEFA2).
+#
+# PREFER 3 WHENEVER AN IB DEVICE EXISTS, EVEN ON A BOX FULL OF EFA RAILS.
+# Measured 2026-09-03 on p6-b300 (18 HCAs: 16 rdmap* EFA 0xEFA3 + 2 ibp*
+# ConnectX-7, both PORT_ACTIVE). Type 5 initializes, loads all 214 GB of
+# weights, and then dies at DECODE CUDA GRAPH CAPTURE:
+#
+#   RuntimeError: NCCL exception (csrc/kernels/backend/nccl.cu:108): 5
+#     (GIN strong signals are required, but the GIN plugin does not support them.)
+#   ... decode_cuda_graph_runner.py:491 in __init__
+#
+# sglang wraps that as "Capture cuda graph failed" and appends its generic OOM
+# "Possible solutions" list (mem-fraction / cuda-graph-max-bs-decode / disable
+# the decode graph) -- ALL IRRELEVANT here, so do not go chasing memory. The
+# masked-decode kernel needs GIN strong signals; EFA_GDA does not implement them
+# and GDAKI does. Type 3 on the same box came up serving in ~6 min.
+#
+# So the old ordering (EFA first) was exactly backwards for anything that
+# captures a decode graph. A prefill-only node runs --disable-cuda-graph and
+# would survive type 5, but build_deepep_envs() feeds prefill AND decode, so
+# there is no reason to split it. NCCL_DEBUG_SUBSYS=GIN prints the backend that
+# was actually selected.
 detect_gin() {
     if [[ -n "${GIN_TYPE:-}" ]]; then
         echo "$GIN_TYPE"; return
     fi
-    if [[ -d /sys/class/infiniband ]] && \
-       ls /sys/class/infiniband 2>/dev/null | grep -q '^rdmap\|^efa'; then
-        echo 5
-    elif [[ -d /sys/class/infiniband ]] && \
-         ls /sys/class/infiniband 2>/dev/null | grep -q '^ibp\|^mlx'; then
+    local devs=""
+    [[ -d /sys/class/infiniband ]] && devs="$(ls /sys/class/infiniband 2>/dev/null)"
+    if grep -q '^ibp\|^mlx' <<<"$devs"; then
         echo 3
+    elif grep -q '^rdmap\|^efa' <<<"$devs"; then
+        # EFA-only box (p5en and friends). Fine for prefill; if a decode graph
+        # capture dies on nccl.cu:108 there is no fallback here -- the box has no
+        # IB device -- so the answer is --disable-cuda-graph or a2a=none.
+        echo 5
     else
         # No RDMA device visible at all. DeepEP v2 will abort on the GIN assert,
         # so say why now instead of letting it look like a v2 bug. Note the host
@@ -285,16 +319,27 @@ detect_gin() {
         echo 5
     fi
 }
-# Only meaningful for GIN type 3; harmless otherwise.
-IB_HCA="${IB_HCA:-ibp198s0f0}"
+# One-plane pin for GIN type 3; harmless otherwise. Auto-picks the first
+# PORT_ACTIVE IB device rather than hardcoding p6-b300's ibp198s0f0, because the
+# two planes have no path between them and NCCL must not straddle them.
+pick_ib_hca() {
+    local d st
+    for d in /sys/class/infiniband/ibp* /sys/class/infiniband/mlx*; do
+        [[ -e "$d" ]] || continue
+        st="$(cat "$d"/ports/1/state 2>/dev/null || true)"
+        [[ "$st" == *ACTIVE* ]] && { basename "$d"; return; }
+    done
+    echo ibp198s0f0   # p6-b300's first plane; also the "nothing found" fallback
+}
+IB_HCA="${IB_HCA:-$(pick_ib_hca)}"
 
 # ---- cluster ----
 # Primary ENA interface (the other 16 enpXX are EFA-only rails).
 PRIMARY_IFACE="${PRIMARY_IFACE:-enp71s0}"
 # These are re-assigned on every instance restart -- re-check with
 # `ssh P6-B300-N hostname -I` before a PD run, or bootstrap silently times out.
-B300_1_IP="${B300_1_IP:-172.31.57.229}"  # P6-B300-1 (as of 2026-08-14)
-B300_2_IP="${B300_2_IP:-172.31.61.182}"  # P6-B300-2 (as of 2026-08-14)
+B300_1_IP="${B300_1_IP:-172.31.24.154}"  # B300-1 / i-062fb296bacd17e04 (2026-09-03 CB)
+B300_2_IP="${B300_2_IP:-172.31.17.223}"  # B300-2 / i-0578b3d904b177fc2 (2026-09-03 CB)
 
 # PD disaggregation
 PREFILL_IP="${PREFILL_IP:-$B300_1_IP}"
@@ -327,8 +372,38 @@ setup_runtime_env() {
     export MC_MAX_CONCURRENT_REG_MR="${MC_MAX_CONCURRENT_REG_MR:-8}"
 
     # DeepEP v2's ElasticBuffer is allocated LAST, after weights + KV pool +
-    # graph capture, so it is the allocation that meets a fragmented heap.
-    export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+    # graph capture, so it is the allocation that meets a fragmented heap, and
+    # expandable_segments is what lets it fit.
+    #
+    # BUT IT BREAKS MOONCAKE PD. Measured 2026-09-03 on 2x p6-b300: with
+    # expandable_segments:True every single KV block transfer fails
+    #
+    #   efa_context.cpp:1175] fi_read/fi_write failed: Invalid argument
+    #     (source=0x1bd24dcc000, len=147456, dest=0x1be4f059c00, rkey=59)
+    #
+    # 5168 of them in one instant = 152 transfers x K3's 34 layers
+    # (147456 B x 24 full-MLA + 32768 B x 10 KDA), i.e. a 100% failure rate, and
+    # prefill then reports the misleading "Decode instance could be dead, remote
+    # mooncake session ... is not alive" because one failure blacklists the
+    # session. Registration is NOT the problem -- fi_mr_regattr failures are 0
+    # and all 16 rails come up.
+    #
+    # It is expandable_segments, not EFA: transfer_engine_bench at the SAME
+    # 147456 B block between these two nodes does 105.43 GB/s over protocol=efa.
+    # The tell is the address range -- 0x1bd/0x1be... are cuMem VMM addresses.
+    # expandable_segments backs a tensor with a growable VA reservation whose
+    # physical mapping is remapped as it grows, so the dmabuf-derived MR
+    # registered at startup no longer describes the memory at transfer time and
+    # libfabric rejects the RMA with EINVAL. This is also why PD worked on
+    # 2026-08-14 and broke now: the var was added for DeepEP v2, after that run.
+    #
+    # So: only PD sets TRANSFER_BACKEND (10_launch_standalone.sh does not), and
+    # PD is exactly the case that must not have it. Standalone keeps it.
+    if [[ -n "${TRANSFER_BACKEND:-}" && "${TRANSFER_BACKEND}" != "none" ]]; then
+        export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:False}"
+    else
+        export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+    fi
 
     # NIXL alternative to Mooncake (TRANSFER_BACKEND=nixl). The image ships
     # libplugin_LIBFABRIC.so, which is the EFA-capable NIXL backend; SGLang
@@ -349,13 +424,36 @@ setup_runtime_env() {
 # assert_arg() cannot check it and needs assert_env() instead. Reading the
 # container is the only way to learn what the server really got rather than what
 # a script meant to pass.
+# Under PD the two sides run on DIFFERENT hosts and there is no ssh between them
+# (tested: publickey denied both ways), so a bench running on the prefill host can
+# only inspect the prefill container -- the decode CAP comes back "unknown" and the
+# filename loses an axis. $2 is an optional asserted value for that case (pass
+# CAP_DECODE=). It goes into the filename bare, because a filename is a join key
+# and decorating it would split one arm across two names; the provenance is
+# recorded in the .log header instead, where read_cap_src() marks it "(asserted)".
 read_cap() {
-    local name="$1" v
+    local name="$1" asserted="${2:-}" v
     v=$(docker inspect -f \
         '{{range .Config.Env}}{{println .}}{{end}}' "$name" 2>/dev/null \
         | grep '^SGLANG_DEEPEP_V2_NUM_MAX_DISPATCH_TOKENS_PER_RANK=' \
         | head -1 | cut -d= -f2)
-    echo "${v:-unknown}"
+    echo "${v:-${asserted:-unknown}}"
+}
+
+# Same value, annotated with where it came from. For the log header only.
+read_cap_src() {
+    local name="$1" asserted="${2:-}" v
+    v=$(docker inspect -f \
+        '{{range .Config.Env}}{{println .}}{{end}}' "$name" 2>/dev/null \
+        | grep '^SGLANG_DEEPEP_V2_NUM_MAX_DISPATCH_TOKENS_PER_RANK=' \
+        | head -1 | cut -d= -f2)
+    if [[ -n "$v" ]]; then
+        echo "$v"
+    elif [[ -n "$asserted" ]]; then
+        echo "${asserted}(asserted: container not on this host)"
+    else
+        echo "unknown(container not on this host and no CAP_* override)"
+    fi
 }
 
 # Assert the image actually has an EFA-capable Mooncake before a 10-minute load.
@@ -370,23 +468,67 @@ require_efa_image() {
         echo "  docker build -t kimi-k3-efa-v2:latest -f Dockerfile ." >&2
         exit 1
     fi
-    if ! docker run --rm --entrypoint bash "$img" -c \
-        'MC=$(python3 -c "import mooncake,os;print(os.path.dirname(mooncake.__file__))");
-         test "$(strings "$MC"/engine.cpython-*.so | grep -ciE efa)" -gt 0' 2>/dev/null; then
-        echo "ERROR: mooncake in '$img' has no EFA support; rebuild from Dockerfile." >&2
-        exit 1
-    fi
-    # Same class of trap: an image built from upstream main cannot register the
-    # GPU KV cache (see the Mooncake section of the Dockerfile) yet still starts
-    # and passes PD warmup, so catch it here rather than 10 minutes later.
-    if ! docker run --rm --entrypoint bash "$img" -c \
-        'MC=$(python3 -c "import mooncake,os;print(os.path.dirname(mooncake.__file__))");
-         strings "$MC"/engine.cpython-*.so | grep -q bindCudaContextIfNeeded' 2>/dev/null; then
-        echo "ERROR: mooncake in '$img' lacks the GPU-MR CUDA-context fix." >&2
-        echo "       Rebuild from Dockerfile with a current" >&2
-        echo "       mooncake-transfer-engine-efa-cuda13 wheel." >&2
-        exit 1
-    fi
+    # All the mooncake checks in ONE container start, each with its own message.
+    #
+    # THREE THINGS HERE WERE WRONG AND EVERY ONE OF THEM MADE THIS GATE LIE.
+    # Measured against the mooncake-transfer-engine-efa-cuda13 wheel (0.3.13.post1)
+    # on 2026-09-03, which is what the Dockerfile installs now:
+    #
+    #  1. The extension is `engine.so`, NOT `engine.cpython-<abi>.so`. That name
+    #     came from the old cmake source build. The glob matched nothing, so
+    #     `strings` errored on a literal asterisk and BOTH checks below failed --
+    #     which is how a known-good image got rejected as "no EFA support".
+    #  2. `grep -ciE efa` is vacuous: "efa" is a substring of "d-efa-ult". It
+    #     returns 389 on the NON-EFA wheel, i.e. it passes on exactly the build
+    #     this check exists to reject. The real discriminator is that the EFA
+    #     build LINKS libfabric and carries its entry points; the non-EFA build
+    #     has zero of both (ibverbs symbols are in both, so they prove nothing).
+    #  3. `bindCudaContextIfNeeded` was the FORK's function name. The upstream
+    #     wheel that carries the same fix does not use it. What it does carry is
+    #     the driver-API calls the fix is made of, including the distinctive
+    #     "cuCtxSetCurrent (restore)" log string from its restore path.
+    #
+    # So: grep for what the wheel actually contains, not for what our fork was
+    # called. Do not "simplify" any of these back to a name or an `efa` substring.
+    local rc=0 out
+    out=$(docker run --rm --entrypoint bash "$img" -c '
+        set -eu
+        MC=$(python3 -c "import mooncake,os;print(os.path.dirname(mooncake.__file__))")
+        E="$MC/engine.so"
+        test -f "$E"                                              || { echo "NO_ENGINE_SO $MC"; exit 1; }
+        ldd "$E" | grep -q libfabric                              || { echo "NO_LIBFABRIC";    exit 1; }
+        test "$(strings "$E" | grep -cE "^fi_(getinfo|mr_reg)" || true)" -ge 2 \
+                                                                  || { echo "NO_FI_SYMS";      exit 1; }
+        strings "$E" | grep -q cuDevicePrimaryCtxRetain           || { echo "NO_CTXFIX";       exit 1; }
+        strings "$E" | grep -q "cuCtxSetCurrent (restore)"        || { echo "NO_CTXFIX";       exit 1; }
+        strings "$E" | grep -q MC_MAX_CONCURRENT_REG_MR           || { echo "NO_REGCAP";       exit 1; }
+        echo OK
+    ' 2>&1) || rc=$?
+    case "$out" in
+        *OK*) : ;;
+        *NO_ENGINE_SO*)
+            echo "ERROR: '$img' has no mooncake engine.so; the wheel layout changed." >&2
+            echo "       $out" >&2; exit 1 ;;
+        *NO_LIBFABRIC*)
+            echo "ERROR: mooncake in '$img' does not link libfabric -- this is the" >&2
+            echo "       NON-EFA wheel. Rebuild with MOONCAKE_PKG naming an" >&2
+            echo "       ...-efa-... distribution." >&2; exit 1 ;;
+        *NO_FI_SYMS*)
+            echo "ERROR: mooncake in '$img' links libfabric but carries no libfabric" >&2
+            echo "       entry points. Suspect a stripped or partial build." >&2; exit 1 ;;
+        *NO_CTXFIX*)
+            echo "ERROR: mooncake in '$img' lacks the GPU-MR CUDA-context fix." >&2
+            echo "       Without it GPU KV registration fails 'Operation not" >&2
+            echo "       supported', startup and PD warmup still pass, and the" >&2
+            echo "       FIRST REAL REQUEST dies. Rebuild from Dockerfile with a" >&2
+            echo "       current mooncake-transfer-engine-efa-cuda13 wheel." >&2; exit 1 ;;
+        *NO_REGCAP*)
+            echo "ERROR: mooncake in '$img' has no MC_MAX_CONCURRENT_REG_MR, so the" >&2
+            echo "       MR-registration fan-out is unbounded (138 s of startup)." >&2; exit 1 ;;
+        *)
+            echo "ERROR: mooncake EFA check on '$img' failed (rc=$rc):" >&2
+            echo "       $out" >&2; exit 1 ;;
+    esac
 
     # Same class of trap, and the worst one: an image WITHOUT the kimi_k3.py
     # patch runs deepep_v2 happily and returns wrong logits, because the MoE

@@ -12,7 +12,17 @@ set -uo pipefail
 cd "$(dirname "$0")"
 source ./env_common.sh
 
-ENDPOINT="${ENDPOINT:-localhost:$PORT}"
+MODE="${MODE:-standalone}"
+# Under PD the default endpoint MUST be the router, not $PORT. Benching
+# localhost:30000 in PD mode hits the PREFILL worker directly, which answers a
+# completion request with a body that has no "choices" key, and bench_serving
+# reports that as `Warmup failed ... KeyError: 'choices'` -- an error that says
+# nothing about the actual mistake. Pass ENDPOINT= explicitly to override.
+if [[ "$MODE" == "pd" ]]; then
+    ENDPOINT="${ENDPOINT:-localhost:$ROUTER_PORT}"
+else
+    ENDPOINT="${ENDPOINT:-localhost:$PORT}"
+fi
 HOST="${ENDPOINT%%:*}"
 BPORT="${ENDPOINT##*:}"
 ISL="${ISL:-1024}"
@@ -23,7 +33,6 @@ NAME="${NAME:-kimi-k3-bench}"
 
 # Raw-log capture. TAG identifies the experiment; MODE is standalone|pd.
 RESULTS_DIR="${RESULTS_DIR:-$SCRIPT_DIR_HOST/results}"
-MODE="${MODE:-standalone}"
 
 # The EP axis has to be IN THE FILENAME. Without it a deepep_v2 run and a
 # plain-TP run at the same profile/ISL/OSL/concurrency write the same .log and
@@ -37,12 +46,15 @@ MODE="${MODE:-standalone}"
 EPTAG=""
 if [[ "${MOE_A2A_BACKEND:-none}" != "none" ]]; then
     if [[ "$MODE" == "pd" ]]; then
-        EPTAG="-${MOE_A2A_BACKEND}-p$(read_cap kimi-k3-prefill)d$(read_cap kimi-k3-decode)"
+        EPTAG="-${MOE_A2A_BACKEND}-p$(read_cap kimi-k3-prefill "${CAP_PREFILL:-}")d$(read_cap kimi-k3-decode "${CAP_DECODE:-}")"
     else
         EPTAG="-${MOE_A2A_BACKEND}-cap$(read_cap kimi-k3)"
     fi
 fi
-TAG="${TAG:-${MODE}-${PROFILE}${EPTAG}-isl${ISL}-osl${OSL}-c${CONCURRENCY}}"
+# NUM_PROMPTS belongs in the name too. It was missing, and a c16 run at 32
+# requests then wrote the same file as a c16 run at 64 -- two different
+# denominators, one filename, second overwrites the first.
+TAG="${TAG:-${MODE}-${PROFILE}${EPTAG}-isl${ISL}-osl${OSL}-c${CONCURRENCY}-n${NUM_PROMPTS}}"
 mkdir -p "$RESULTS_DIR"
 LOG="$RESULTS_DIR/${TAG}.log"
 JSON="$RESULTS_DIR/${TAG}.json"
@@ -58,7 +70,7 @@ echo "log  : ${LOG}"
   # MoE path produced it. "unknown" means the container was not reachable from
   # here (e.g. benching a remote endpoint) -- treat such a row as unlabelled.
   if [[ "$MODE" == "pd" ]]; then
-      echo "### a2a=${MOE_A2A_BACKEND} ep=${EP_SIZE} cap_prefill=$(read_cap kimi-k3-prefill) cap_decode=$(read_cap kimi-k3-decode)"
+      echo "### a2a=${MOE_A2A_BACKEND} ep=${EP_SIZE} cap_prefill=$(read_cap_src kimi-k3-prefill "${CAP_PREFILL:-}") cap_decode=$(read_cap_src kimi-k3-decode "${CAP_DECODE:-}")"
   else
       echo "### a2a=${MOE_A2A_BACKEND} ep=${EP_SIZE} cap=$(read_cap kimi-k3)"
   fi

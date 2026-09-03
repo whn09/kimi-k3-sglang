@@ -53,6 +53,18 @@ if [[ "${MOE_A2A_BACKEND:-none}" != "none" ]]; then
         --deepep-v2-mode "${DEEPEP_V2_MODE:-direct}"
         --moe-runner-backend "${MOE_RUNNER_BACKEND:-deep_gemm}"
     )
+    # THE DRAFT MODEL INHERITS THIS BACKEND, AND v2 REFUSES TO BE IT.
+    # moe_hook.py:validate_deepep_v2_speculative_draft() raises
+    #   "DeepEP v2 MoE is not validated as a speculative draft backend"
+    # when speculative_moe_a2a_backend is unset and the algorithm is not ngram:
+    # it then copies moe_a2a_backend into the draft. So `--moe-a2a-backend
+    # deepep_v2` + DSPARK is a hard startup failure with nothing about the draft
+    # in the message -- it fails in resolve_once(), before any weight load, which
+    # is at least cheap. The target model still runs v2; only the draft is pinned
+    # off it. Override with SPEC_A2A_BACKEND= if a future release validates one.
+    if [[ "${NO_SPEC:-0}" != "1" ]]; then
+        EP_ARGS+=(--speculative-moe-a2a-backend "${SPEC_A2A_BACKEND:-none}")
+    fi
 fi
 
 # THE PREFILL NODE RUNS NO DECODE CUDA GRAPHS. That is the trade PD exists to

@@ -356,6 +356,48 @@ echoes its resolved config the way `21_launch_decode.sh` always did; and
 mistake now aborts the row instead of publishing a number. For reference, fixing
 it moved PD balanced 1354 → 1649 tok/s.
 
+### Prefill CAP: the DeepEP v2 default costs 2.6× at ISL 8192
+
+Same operating point as the profile matrix above (ISL 8192 / OSL 1024, 64
+prompts, concurrency 32, DSPARK on, PD through the router, Mooncake/EFA), 2x
+p6-b300, DeepEP v2 `direct` ep=tp=8, decode fixed at `DECODE_CAP=512
+DECODE_CGMAXBS=64`. Only `PREFILL_CAP` varies, and `PREFILL_CHUNK` tracks it
+(`CHUNK/dp_size <= CAP` is a boot check, so chunked-prefill-size *is* CAP here).
+Each arm ran a **discarded warmup** plus two timed runs — the warmup is not
+optional, it is worth 6–9 % on the first run.
+
+| prefill CAP = chunk | out tok/s (r1 / r2) | total tok/s | mean TTFT | mean TPOT | ITL p50 |
+|---|---|---|---|---|---|
+| 2048 (the current default) | 688.98 / 687.73 | 6201 / 6190 | 31.4 s | 5.91 ms | 43.0 ms |
+| 4096 | 1238.20 / 1249.13 | 11144 / 11242 | 14.1 s | 7.63 ms | 56.9 ms |
+| **8192** | **1775.03 / 1759.55** | 15975 / 15836 | **6.6 s** | 8.87 ms | 66.2 ms |
+| 16384 | 1785.01 / 1794.43 | 16065 / 16150 | 6.5 s | 8.70 ms | 66.1 ms |
+| plain TP (`MOE_A2A_BACKEND=none`, chunk 16384) | 2291.05 / 2291.76 | 20619 / 20626 | 7.0 s | 5.38 ms | 42.0 ms |
+
+**Raise `PREFILL_CAP` to at least the ISL you serve.** 2048 → 8192 is **+158 %**
+output throughput and cuts mean TTFT 31.4 → 6.6 s (4.8×), and every arm is
+reproducible to 0.9 %. The default of 2048 was carried over from a *standalone*
+measurement where one number had to satisfy the decode capture pool as well; a PD
+prefill node runs `--disable-cuda-graph`, has no capture pool, and boots fine at
+16384.
+
+**The knee is exactly ISL.** 8192 → 16384 buys 0.9 %, because an 8192-token
+request is no longer chunked once chunk ≥ 8192; past that, CAP only enlarges the
+ElasticBuffer. So this is not a knob to sweep — set it from the workload.
+
+**TPOT gets worse as prefill gets faster (5.91 → 8.87 ms), and that is not a
+regression.** The decode node is byte-identical across these five rows. At
+CAP=2048 prefill is the bottleneck and starves decode, so decode runs small
+batches at low per-token cost and low throughput; ITL p50 moves the same way
+(43.0 → 66.2 ms). Read the throughput column, and read TPOT against the
+concurrency actually achieved.
+
+**DeepEP v2 at its best is still 78 % of plain TP here** (1794 vs 2291) with 1.6×
+the TPOT. That is the price of the v2 dispatcher at ep=8 on two nodes, and it is
+not something CAP recovers — v2 is for large-EP shapes. Today's plain-TP arm also
+reproduces the profile-matrix reference row above (2162.7 / 2158.1) to +6 %,
+which is what validates the whole comparison as same-口径.
+
 ### Mooncake vs NIXL: KV transfer is at parity, startup is not
 
 Same workload point, PD low-latency, two runs each, all four on one container

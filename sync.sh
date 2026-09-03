@@ -12,7 +12,11 @@
 set -euo pipefail
 
 cd "$(dirname "$0")"
-HOSTS="${HOSTS:-P6-B300-1 P6-B300-2}"
+# DEFAULT DELIBERATELY NOT `P6-B300-*`. Those two ssh aliases point at a
+# COLLEAGUE's us-west-2 machines (see the "别动" note in ~/.ssh/config); a bare
+# `bash sync.sh` used to rsync this whole tree into them. B300-1/B300-2 are the
+# aliases for our own boxes, re-pointed each time a pair is launched.
+HOSTS="${HOSTS:-B300-1 B300-2}"
 REMOTE="${REMOTE:-/home/ubuntu/kimi-k3-sglang}"
 
 push() {
