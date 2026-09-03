@@ -1,0 +1,16 @@
+matrix: isl=8192 osl=1024 n=64 conc=32 repeats=2 backend=mooncake
+configs: pd:low-latency
+started: 2026-09-03T08:26:33Z
+
+########## mode=pd profile=low-latency  (2026-09-03T08:26:33Z) ##########
+Warning: Permanently added 'ec2-3-37-122-249.ap-northeast-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+DeepEP v2: ep=8 mode=direct runner=deep_gemm cap=8192 gin=3
+5d842bda9482a36461bbe480a08f1085ec7ad907b59e3bfdcd19088912daefa9
+launched 'kimi-k3-prefill' (profile=low-latency, mem=0.85, dcp=1, mamba=0.86, backend=mooncake)  ->  docker logs -f kimi-k3-prefill
+  a2a=deepep_v2 ep=8 cap=8192 chunk=8192 decode-graphs=OFF
+Warning: Permanently added 'ec2-3-39-165-44.ap-northeast-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+DeepEP v2: ep=8 mode=direct runner=deep_gemm cap=1024 gin=3
+7ebd4394d1a5390a29af53861cff4c13eb7885a4bb8ac3e0e0860321d121dd31
+launched 'kimi-k3-decode' (profile=low-latency, mem=0.85, dcp=1, mamba=0.17, symm=on)  ->  docker logs -f kimi-k3-decode
+  a2a=deepep_v2 ep=8 cap=1024 chunk=512 decode-graphs=ON max-bs=16 max-run=16
+  ready: prefill after 210s

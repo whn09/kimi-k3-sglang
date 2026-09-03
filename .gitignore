@@ -222,6 +222,15 @@ __marimo__/
 # machine-specific. Curated numbers live in README.md.
 results/*.log
 results/*.json
+# Same rule one level down: these two patterns do NOT recurse, so an archived
+# arm (results/archive-<why>-<date>/) would otherwise be committed in full.
+# Archives exist to keep a contaminated run inspectable locally -- e.g. the
+# cold-JIT decode-CAP arm -- not to ship it.
+results/**/*.log
+results/**/*.json
+
+# The Kimi-K3 tech report is Moonshot's document, not ours to redistribute here.
+k3_tech_report.pdf
 
 # macOS Finder metadata -- never useful in a repo, and it turns up in every
 # directory the laptop has browsed.

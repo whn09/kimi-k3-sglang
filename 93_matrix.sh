@@ -23,9 +23,36 @@ set -uo pipefail
 cd "$(dirname "$0")"
 source ./env_common.sh
 
-PREFILL_HOST="${PREFILL_HOST:-P6-B300-1}"   # also the standalone + router host
-DECODE_HOST="${DECODE_HOST:-P6-B300-2}"
+# B300-1/B300-2, NOT P6-B300-1/P6-B300-2. Those two aliases point at a
+# COLLEAGUE's machines (the "别动" note in ~/.ssh/config), and this file used to
+# default to them -- so `bash 93_matrix.sh` sent `docker rm -f kimi-k3-*` at
+# someone else's box and then hung on a teardown ssh with no ConnectTimeout,
+# looking exactly like a slow launch. sync.sh already carried the same warning
+# for the same reason; this file's header claimed it used "the same ssh aliases
+# sync.sh uses" while doing the opposite. Caught 2026-09-03 only because their
+# instances happened to be stopped, so nothing reached them.
+PREFILL_HOST="${PREFILL_HOST:-B300-1}"   # also the standalone + router host
+DECODE_HOST="${DECODE_HOST:-B300-2}"
 REMOTE="${REMOTE:-/home/ubuntu/kimi-k3-sglang}"
+
+# Refuse to drive a colleague's box even if someone passes it explicitly. This
+# driver's very first action per config is `docker rm -f` against fixed container
+# names, so a wrong host is destructive before it is ever obviously wrong.
+for h in "$PREFILL_HOST" "$DECODE_HOST"; do
+    if [[ "$h" == P6-B300* ]]; then
+        echo "REFUSING: '$h' is a colleague's machine (see ~/.ssh/config)." >&2
+        echo "          Use B300-1/B300-2, or set PREFILL_HOST/DECODE_HOST." >&2
+        exit 1
+    fi
+done
+# Preflight both hosts before tearing anything down: 15 s of "unreachable" beats
+# minutes of a silent hang that reads as a slow launch.
+for h in "$PREFILL_HOST" "$DECODE_HOST"; do
+    if ! ssh -o ConnectTimeout=15 -o BatchMode=yes "$h" true 2>/dev/null; then
+        echo "REFUSING: host '$h' is unreachable." >&2
+        exit 1
+    fi
+done
 
 REPEATS="${REPEATS:-2}"
 # A discarded first run. NOT optional politeness: deep_gemm JIT-compiles inside
@@ -89,7 +116,10 @@ say "started: $(date -u +%FT%TZ)"
 teardown() {
     local host="$1"; shift
     local names="$*"
-    ssh "$host" "for n in $names; do
+    # ConnectTimeout, because a host that is simply unreachable otherwise hangs
+    # here indefinitely with the driver's last line of output being the config
+    # banner -- indistinguishable from a slow weight load.
+    ssh -o ConnectTimeout=15 "$host" "for n in $names; do
         for i in \$(seq 1 60); do
             docker inspect \$n >/dev/null 2>&1 || break
             docker rm -f \$n >/dev/null 2>&1 || true
@@ -114,12 +144,32 @@ wait_ready() {
 
 # Read a knob back out of the server's own server_args line. The launcher echo
 # only proves what the script meant to pass; this proves what the server used.
+# The pattern here is load-bearing and was WRONG until 2026-09-03: this image
+# prints server_args as a Python dict repr -- "'dcp_size': 1" -- while the old
+# pattern matched "dcp_size=1". Every key therefore came back <absent>, every PD
+# config was skipped, and the driver reported a tidy "finished" having benchmarked
+# nothing. Accept both spellings, and tell the two failure kinds apart: a key that
+# is missing from server_args entirely is a HARNESS bug and aborts the run, while
+# a key whose value differs is a CONFIG bug and skips that config. Collapsing
+# those two into one "skip" is what hid this for two whole arms.
 assert_arg() {
-    local host="$1" name="$2" key="$3" want="$4" got
-    got=$(ssh "$host" "docker logs $name 2>&1 | grep -o 'server_args=.*' | head -1 \
-        | tr ',' '\n' | grep -oE '^ *$key=.*' | head -1 | tr -d ' '" 2>/dev/null)
-    if [[ "$got" != "$key=$want" ]]; then
-        say "  CONFIG MISMATCH $name: want $key=$want, server reports '${got:-<absent>}'"
+    local host="$1" name="$2" key="$3" want="$4" line got
+    line=$(ssh -o ConnectTimeout=15 "$host" \
+        "docker logs $name 2>&1 | grep -o 'server_args=.*' | head -1" 2>/dev/null)
+    if [[ -z "$line" ]]; then
+        say "  HARNESS ERROR: no server_args line in $name's log -- cannot verify config"
+        return 2
+    fi
+    got=$(printf '%s' "$line" | tr ',' '\n' \
+        | sed -nE "s/^[[:space:]]*'?${key}'?[[:space:]]*[:=][[:space:]]*'?([^',)]*)'?.*/\1/p" \
+        | head -1)
+    got="${got//[[:space:]]/}"
+    if [[ -z "$got" ]]; then
+        say "  HARNESS ERROR: '$key' absent from $name's server_args -- readback pattern is stale"
+        return 2
+    fi
+    if [[ "$got" != "$want" ]]; then
+        say "  CONFIG MISMATCH $name: want $key=$want, server reports '$got'"
         return 1
     fi
     say "  verified $name $key=$want"
@@ -140,6 +190,18 @@ assert_cap() {
         return 1
     fi
     say "  verified $name CAP=$want"
+}
+
+# rc=2 from assert_arg means the driver cannot see the config at all. That is not
+# a config to skip past -- every remaining config would be equally unverifiable,
+# so stop and say so instead of producing a "finished" with no rows.
+must_arg() {
+    assert_arg "$@"; local rc=$?
+    if (( rc == 2 )); then
+        say "  ABORTING: config readback is broken, not benchmarking blind"
+        exit 1
+    fi
+    return $rc
 }
 
 run_bench() {
@@ -214,12 +276,12 @@ for cfg in $CONFIGS; do
         wait_ready "$PREFILL_HOST" "$PORT" "prefill" || continue
         wait_ready "$DECODE_HOST"  "$PORT" "decode"  || continue
 
-        assert_arg "$PREFILL_HOST" kimi-k3-prefill dcp_size "$w_pdcp" || continue
-        assert_arg "$PREFILL_HOST" kimi-k3-prefill mamba_full_memory_ratio "$w_pmamba" || continue
-        assert_arg "$PREFILL_HOST" kimi-k3-prefill mem_fraction_static "$w_pmem" || continue
-        assert_arg "$DECODE_HOST"  kimi-k3-decode  dcp_size "$w_ddcp" || continue
-        assert_arg "$DECODE_HOST"  kimi-k3-decode  mamba_full_memory_ratio "$w_dmamba" || continue
-        assert_arg "$DECODE_HOST"  kimi-k3-decode  mem_fraction_static "$w_dmem" || continue
+        must_arg "$PREFILL_HOST" kimi-k3-prefill dcp_size "$w_pdcp" || continue
+        must_arg "$PREFILL_HOST" kimi-k3-prefill mamba_full_memory_ratio "$w_pmamba" || continue
+        must_arg "$PREFILL_HOST" kimi-k3-prefill mem_fraction_static "$w_pmem" || continue
+        must_arg "$DECODE_HOST"  kimi-k3-decode  dcp_size "$w_ddcp" || continue
+        must_arg "$DECODE_HOST"  kimi-k3-decode  mamba_full_memory_ratio "$w_dmamba" || continue
+        must_arg "$DECODE_HOST"  kimi-k3-decode  mem_fraction_static "$w_dmem" || continue
         if [[ "$w_a2a" != "none" ]]; then
             # The two sides run DIFFERENT caps on purpose -- that is the point of
             # doing DeepEP v2 under PD -- so both get checked, separately.
@@ -231,7 +293,7 @@ for cfg in $CONFIGS; do
             # DSPARK silently rewrites it to 48 when nothing is passed -- so an
             # unforwarded DECODE_MAXRUN looks identical to a set one in the logs.
             if [[ -n "${DECODE_MAXRUN:-}" ]]; then
-                assert_arg "$DECODE_HOST" kimi-k3-decode max_running_requests "$DECODE_MAXRUN" || continue
+                must_arg "$DECODE_HOST" kimi-k3-decode max_running_requests "$DECODE_MAXRUN" || continue
             fi
         fi
 
@@ -244,9 +306,9 @@ for cfg in $CONFIGS; do
         ssh "$PREFILL_HOST" "cd $REMOTE && PROFILE=$profile$FWD bash 10_launch_standalone.sh" 2>&1 | tee -a "$SUMMARY"
         wait_ready "$PREFILL_HOST" "$PORT" "standalone" || continue
 
-        assert_arg "$PREFILL_HOST" kimi-k3 dcp_size "$w_sdcp" || continue
-        assert_arg "$PREFILL_HOST" kimi-k3 mamba_full_memory_ratio "$w_smamba" || continue
-        assert_arg "$PREFILL_HOST" kimi-k3 mem_fraction_static "$w_smem" || continue
+        must_arg "$PREFILL_HOST" kimi-k3 dcp_size "$w_sdcp" || continue
+        must_arg "$PREFILL_HOST" kimi-k3 mamba_full_memory_ratio "$w_smamba" || continue
+        must_arg "$PREFILL_HOST" kimi-k3 mem_fraction_static "$w_smem" || continue
         [[ "$w_a2a" == "none" ]] || assert_cap "$PREFILL_HOST" kimi-k3 "$w_scap" || continue
         bench_host="$PREFILL_HOST"; endpoint="localhost:$PORT"
     fi

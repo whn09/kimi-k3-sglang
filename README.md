@@ -400,10 +400,9 @@ which is what validates the whole comparison as same-口径.
 
 ### Decode CAP: what makes a small one legal (and what silently breaks)
 
-Untested territory — this section is the constraint, not a result. On DSV4/B300
-dropping the decode capacity 2048 → 256 was −16 % step time / +18 % tok/s, so a
-small decode CAP is worth measuring on K3 too. Getting there needs one more knob
-than it looks, because **two different checks read the decode CAP**:
+**Measured: `DECODE_CAP=128` beats 512 by 6.3 % tok/s** — the table is at the end
+of this section. Getting there needs one more knob than it looks, because **two
+different checks read the decode CAP**:
 
 | where | check | when it fires |
 |---|---|---|
@@ -455,6 +454,57 @@ checked against CAP — `moe_hook.py:376` skips the prefill half when
 `DECODE_MAXRUN` is in the filename for that reason. Note that a lower
 `max_running_requests` caps server-side concurrency, so a `CAP=128` row measures
 CAP *and* an admission limit unless the control shares it.
+
+#### The measurement
+
+ISL 8192 / OSL 1024, 64 prompts, concurrency 32, DSPARK on, PD over Mooncake/EFA
+through the router. `DECODE_MAXRUN=16`, `DECODE_CGMAXBS=16`, `DECODE_CHUNK=512`
+in **both** arms; prefill is `CAP=8192` / `CHUNK=8192` in both. r0 is a discarded
+warmup and is excluded from the means.
+
+| decode CAP | n | out tok/s | duration s | TTFT mean | TPOT mean | ITL p50 |
+|---|---|---|---|---|---|---|
+| **128** | 3 | **1683.4** | 38.93 | 8292 ms | **7.88 ms** | **57.55 ms** |
+| 512 | 2 | 1584.3 | 41.37 | 8682 ms | 8.40 ms | 61.04 ms |
+
+**CAP 512 → 128: +6.3 % out tok/s, −6.2 % TPOT, −5.7 % ITL p50, −5.9 % duration.**
+Replicate spread is 0.5–0.7 % on throughput, so the delta is ~10× the noise. Same
+sign as the DSV4/B300 result that motivated the run (2048 → 256 = −16 % step
+time), consistent with the `masked_max_m = CAP × ep_size` compute cost rather
+than anything on the wire.
+
+TTFT moves too, by −4.5 %, even though the prefill node is byte-identical across
+arms — that is queueing, not a prefill effect: decode draining faster shortens
+the prefill queue.
+
+**CAP=1024 is not available in this profile at all**: it OOMs during decode graph
+capture (`Tried to allocate 10.50 GiB … 8.02 GiB is free … 22.90 GiB allocated in
+private pools`, `decode_cuda_graph_runner.py:491`). That is why the sweep is
+128 vs 512. The capture pool is where the CAP is spent: both arms have 39.05 GB
+free at *Memory pool end*, and after capture **CAP=128 leaves 27.40 GB against
+CAP=512's 18.83 GB — 8.57 GB of difference**. Do not splice those with the older
+1024 → 18.48 GB / 2048 → 33.43 GiB points; different profile, different shape
+set, and the sequence is not proportional.
+
+Generate the table rather than reading it off here:
+
+```
+python3 gen_decode_cap_table.py                    # ./results, caps 128 512
+python3 gen_decode_cap_table.py --caps 128 256 512
+```
+
+It pulls every figure out of the json `91_bench.sh` wrote, and — the point of it —
+re-reads `max_running_requests`, `chunked_prefill_size`, `dcp_size`,
+`cuda_graph_max_bs_decode`, `speculative_num_draft_tokens`, the KV pool size and
+`mem_fraction_static` out of each arm's own `.decode.log`, then **exits non-zero
+and refuses to endorse the deltas if any of them differs between arms**. All seven
+agree for the table above. `speculative_num_draft_tokens: 8` in `server_args` is
+also independent confirmation, from the runtime side, of the
+`tokens_per_req = SPEC_BLOCK_SIZE + 1` reading the rule above depends on.
+
+One operational note, because it cost an arm: `91_bench.sh` *appends* to its json,
+so re-running a tag leaves several records in one file and only the last is
+current — the generator says so when it sees it.
 
 ### Mooncake vs NIXL: KV transfer is at parity, startup is not
 

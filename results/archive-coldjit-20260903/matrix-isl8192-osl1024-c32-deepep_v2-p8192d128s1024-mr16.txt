@@ -1,0 +1,58 @@
+matrix: isl=8192 osl=1024 n=64 conc=32 repeats=2 backend=mooncake
+configs: pd:low-latency
+started: 2026-09-03T09:38:01Z
+
+########## mode=pd profile=low-latency  (2026-09-03T09:38:01Z) ##########
+Warning: Permanently added 'ec2-3-37-122-249.ap-northeast-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+DeepEP v2: ep=8 mode=direct runner=deep_gemm cap=8192 gin=3
+48ff19bb1d0f279c4c8c9c6ad996a398edeeea61de4257735d574af72f719e47
+launched 'kimi-k3-prefill' (profile=low-latency, mem=0.85, dcp=1, mamba=0.86, backend=mooncake)  ->  docker logs -f kimi-k3-prefill
+  a2a=deepep_v2 ep=8 cap=8192 chunk=8192 decode-graphs=OFF
+Warning: Permanently added 'ec2-3-39-165-44.ap-northeast-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+DeepEP v2: ep=8 mode=direct runner=deep_gemm cap=128 gin=3
+132f59d7eab16f8b0e6c98e202bde192e8767155c080ac0375382bb49d7455cc
+launched 'kimi-k3-decode' (profile=low-latency, mem=0.85, dcp=1, mamba=0.17, symm=on)  ->  docker logs -f kimi-k3-decode
+  a2a=deepep_v2 ep=8 cap=128 chunk=512 decode-graphs=ON max-bs=16 max-run=16
+  ready: prefill after 420s
+  ready: decode after 30s
+  verified kimi-k3-prefill dcp_size=1
+  verified kimi-k3-prefill mamba_full_memory_ratio=0.86
+  verified kimi-k3-prefill mem_fraction_static=0.85
+  verified kimi-k3-decode dcp_size=1
+  verified kimi-k3-decode mamba_full_memory_ratio=0.17
+  verified kimi-k3-decode mem_fraction_static=0.85
+  verified kimi-k3-prefill CAP=8192
+  verified kimi-k3-decode CAP=128
+  verified kimi-k3-decode max_running_requests=16
+  ready: router after 30s
+----- warmup (DISCARDED) -----
+----- run 0/2  tag=pd-low-latency-mooncake-deepep_v2-p8192d128-mr16-isl8192-osl1024-c32-r0 -----
+----- run 1/2  tag=pd-low-latency-mooncake-deepep_v2-p8192d128-mr16-isl8192-osl1024-c32-r1 -----
+Successful requests:                     64        
+Benchmark duration (s):                  54.08     
+Request throughput (req/s):              1.18      
+Output token throughput (tok/s):         1211.87   
+Total token throughput (tok/s):          10906.81  
+Mean E2E Latency (ms):                   23627.08  
+Mean TTFT (ms):                          15843.95  
+Median TTFT (ms):                        15567.35  
+Mean TPOT (ms):                          7.61      
+Median TPOT (ms):                        7.53      
+Mean ITL (ms):                           53.84     
+Median ITL (ms):                         57.47     
+----- run 2/2  tag=pd-low-latency-mooncake-deepep_v2-p8192d128-mr16-isl8192-osl1024-c32-r2 -----
+Successful requests:                     64        
+Benchmark duration (s):                  38.76     
+Request throughput (req/s):              1.65      
+Output token throughput (tok/s):         1690.88   
+Total token throughput (tok/s):          15217.95  
+Mean E2E Latency (ms):                   16322.77  
+Mean TTFT (ms):                          8289.26   
+Median TTFT (ms):                        8689.57   
+Mean TPOT (ms):                          7.85      
+Median TPOT (ms):                        7.58      
+Mean ITL (ms):                           55.80     
+Median ITL (ms):                         57.53     
+
+finished: 2026-09-03T09:56:07Z
+raw logs: on the hosts under /home/ubuntu/kimi-k3-sglang/results/ -- 'bash sync.sh pull' to fetch
