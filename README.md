@@ -442,51 +442,75 @@ Details:
   way out — CAP has to stay at 1024 for decode graph capture to fit, which is
   exactly the trade the PD split exists to break.
 
-### PD with a cross-node-EP prefill side: 285 → 1047 tok/s
+### PD with cross-node EP: 285 → 1047 → 1422 tok/s
 
-Same day, and it confirms the diagnosis above. Prefill is the 2-node TP=16 /
-ep=16 / `hybrid` / `gin=5` instance on B300-1 + B300-2 at `CAP=CHUNK=8192`
-(`--disable-cuda-graph`, `MEM_FRACTION=0.78`); decode is a **single-node TP=8 /
-ep=8 / `direct` / `gin=3`** instance on B300-4 at `CAP=512`, `MEM_FRACTION=0.85`;
-router on B300-1 with one prefill and one decode URL. Same ISL 8192 / OSL 1024 /
-n=64 / c32.
+Same day, all three rows at ISL 8192 / OSL 1024 / n=64 / c32, image
+`kimi-k3-efa-v2:nccl2312`, `PROFILE=low-latency`, `MEM_FRACTION=0.78` on every
+2-node instance. Prefill is always the 2-node TP=16 / ep=16 / `hybrid` / `gin=5`
+instance on B300-1 + B300-2 at `CAP=CHUNK=8192` (`--disable-cuda-graph`); only
+the decode side changes.
 
-| arm | out tok/s | in tok/s | duration | TTFT mean / p50 | TPOT mean | conc |
-|---|---|---|---|---|---|---|
-| unified 2-node ep=16, `CAP=CHUNK=1024` | 284.97 | 2279.76 | 229.98 s | 29781 / 18311 ms | 79.97 ms | 31.05 |
-| PD, prefill 2-node ep=16 `CAP=8192` | **1046.54** | **8372.36** | 62.62 s | 6180 / 4342 ms | 17.78 ms | 24.90 |
+| arm | machines | out tok/s | in tok/s | duration | TTFT mean / p50 | TPOT mean | conc |
+|---|---|---|---|---|---|---|---|
+| unified 2-node ep=16, `CAP=CHUNK=1024` | 2 | 284.97 | 2279.76 | 229.98 s | 29781 / 18311 ms | 79.97 ms | 31.05 |
+| PD, prefill 2-node ep=16 `CAP=8192`, decode 1-node ep=8 | 3 | 1046.54 | 8372.36 | 62.62 s | 6180 / 4342 ms | 17.78 ms | 24.90 |
+| PD, **both sides 2-node ep=16** (`gin=5` on both) | 4 | **1421.72** | **11373.73** | 46.10 s | 4863 / 2448 ms | 14.47 ms | 27.30 |
 
-**3.67x on both input and output throughput, from raising the chunk alone** —
-same prefill hardware, same image, same GIN backend, same a2a. TTFT drops 4.8x.
-That is the CAP knee, not the wire; the unified arm's 285 tok/s was never an a2a
+**Row 1 → row 2 is 3.67x on both input and output throughput from raising the
+chunk alone** — same prefill hardware, same image, same GIN backend, same a2a,
+TTFT 4.8x lower. That is the CAP knee, not the wire; the unified arm's 285 tok/s
+was never an a2a result.
+
+**Row 2 → row 3 (doubling the decode side to 2 nodes / ep=16) is +35.9% output
+throughput, −18.6% TPOT, −21% mean TTFT.** So after the chunk fix the binding
+constraint moved to decode, and buying decode capacity pays. It is still not
+saturated: achieved concurrency is 27.30 of 32.
+
+**Where row 3's remaining headroom is.** Prefill now reports **17 664–20 980
+tok/s** per `Prefill batch` (against 2 790–2 858 at `CHUNK=1024`) while the run
+only consumed 11 374, so prefill is ~55% utilised and no longer the bottleneck.
+Decode's own `gen throughput` at `#running-req: 32` is 2 208–2 272 tok/s against
+1 422 end-to-end, i.e. the decode nodes idle waiting for handoffs. 74 prefill
+batches and 491 decode batches, 64/64 successful, no errors.
+
+Do not read row 3 against the 1272.94 tok/s all-`ep=8` **2P2D** row below: that
+one is a *different topology* (two independent ep=8 decode instances, not one
+2-node ep=16 instance) **on the previous image generation**. Row 3 beats it by
+11.7% on output throughput with 3.6x better mean TTFT, but its TPOT is 14.47 ms
+against 6.26 ms — two axes moved, so treat that as unexplained rather than as a
 result.
 
-Do not read this against the 1272.94 tok/s all-`ep=8` **2P2D** row below: that
-one has *two* decode nodes and this one has one, which is why its TPOT is 6.26 ms
-against 17.78 ms here while its TTFT is 2.8x worse. Achieved concurrency here is
-24.90 of 32, i.e. the single decode node is now the limit.
-
-**Two asymmetries in this arm are deliberate and both are load-bearing:**
+**One asymmetry in row 2 was deliberate and is load-bearing:**
 
 - **`tp_size` 16 (prefill) vs 8 (decode).** The router logs it as
   `WARN ... conflicting tp_size: prefill=Some("16"), decode=Some("8")` and then
   works — registration, KV transfer over Mooncake/EFA, and streaming are all
-  fine. It is a warning, not a defect.
-- **`gin=5` on prefill, `gin=3` on decode.** `NCCL_GIN_TYPE=5` **fails on a
-  single-node `ep=8 mode=direct` instance**: `_C.ElasticBuffer(...)` →
-  `nccl.cu:188): 3 (GIN: DevComm setup failed on all available backends)`, raised
-  through `Capture cuda graph failed:` at `init_all_cuda_graphs`. The same host
-  and image with `GIN_TYPE=3` comes up clean. So the rule is **type 5 for a
-  cross-node (`hybrid`) instance, type 3 for a single-node (`direct`) one** —
-  which costs nothing here, because a `direct` instance keeps its a2a on NVLink
-  anyway.
+  fine. It is a warning, not a defect. Row 3 is symmetric (16/16) and warns about
+  nothing.
+- **`gin=5` on prefill, `gin=3` on decode — only because decode was single-node
+  there.** `NCCL_GIN_TYPE=5` **fails on a single-node `ep=8 mode=direct`
+  instance**: `_C.ElasticBuffer(...)` → `nccl.cu:188): 3 (GIN: DevComm setup
+  failed on all available backends)`, raised through `Capture cuda graph failed:`
+  at `init_all_cuda_graphs`. The same host and image with `GIN_TYPE=3` comes up
+  clean, and in row 3 the *same* decode host runs type 5 without complaint as
+  part of a 2-node `hybrid` instance (`world_size=16 ... cap=512
+  num_bytes=132120576`). So the rule is **type 5 for a cross-node (`hybrid`)
+  instance, type 3 for a single-node (`direct`) one** — which costs nothing,
+  because a `direct` instance keeps its a2a on NVLink anyway.
   This is *not* a Mooncake conflict: the prefill node brings up Mooncake's 16 EFA
   endpoints at 09:40:31 and then builds its ElasticBuffer at 09:43:59
   (`world_size=16 ... num_bytes=1233125376`) on type 5 without complaint.
 
-Still not run: the **full 2P2D at EP=16** (both sides 2-node TP=16, all four
-B300s). B300-3 was occupied by an unrelated `lmsysorg/sglang:hy4-preview`
-container on GPUs 0–3 for the whole session, so only three hosts were available.
+Reproduce row 3 (four hosts, `$P0` = B300-1's IP, `$D0` = B300-3's IP):
+
+```bash
+E="IMAGE=kimi-k3-efa-v2:nccl2312 NNODES=2 TP_SIZE=16 MEM_FRACTION=0.78"
+B300-1: $E NODE_RANK=0 DIST_INIT_ADDR=$P0 bash 20_launch_prefill.sh
+B300-2: $E NODE_RANK=1 DIST_INIT_ADDR=$P0 bash 20_launch_prefill.sh
+B300-3: $E NODE_RANK=0 DIST_INIT_ADDR=$D0 bash 21_launch_decode.sh
+B300-4: $E NODE_RANK=1 DIST_INIT_ADDR=$D0 bash 21_launch_decode.sh
+B300-1: PREFILL_IPS=$P0 DECODE_IPS=$D0 bash 22_launch_router.sh   # rank-0 IPs only
+```
 
 ### 2P2D: it runs, and it is decode-admission-bound, not prefill-bound
 
