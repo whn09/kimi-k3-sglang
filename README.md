@@ -60,20 +60,25 @@ balanced / high-throughput profiles (see the DCP note below).
 bash 00_download_models.sh
 docker build -t kimi-k3-efa-v2:latest -f Dockerfile .
 
-# ...or pull it prebuilt instead of building. Published in BOTH regions p6-b300
-# has actually been obtainable in -- pick the one this host is in, because a
-# cross-region pull of 14.9 GB is slower and bills egress:
-#   ap-northeast-2  (where the spot grabber hunts, AZ ap-northeast-2c)
-#   us-west-2       (where the capacity-block/on-demand attempts have run)
-REGION=$(curl -s -H "X-aws-ec2-metadata-token: $(curl -sX PUT \
-  http://169.254.169.254/latest/api/token \
-  -H 'X-aws-ec2-metadata-token-ttl-seconds: 60')" \
-  http://169.254.169.254/latest/meta-data/placement/region)
+# ...or pull it prebuilt instead of building. The CURRENT tag exists in
+# ap-northeast-2 ONLY; the older deepep-v2-20260902-07c8f729 is also in
+# us-west-2. A cross-region pull is slower and bills egress, so if a p6-b300
+# turns up in us-west-2 again, push the tag there rather than pulling across.
+# Pulling needs an instance role with ECR read -- these hosts ship with none, so
+# a fresh box answers `aws ecr` with NoCredentials until one is attached.
+REGION=ap-northeast-2
 ECR=579019700964.dkr.ecr.$REGION.amazonaws.com/kimi-k3-sglang-b300
+TAG=deepep-v2-amzn97d8f9b-efa1.50.0-20260904-07c8f729
 aws ecr get-login-password --region $REGION \
   | docker login --username AWS --password-stdin "${ECR%%/*}"
-docker pull $ECR:deepep-v2-20260902-07c8f729
-docker tag  $ECR:deepep-v2-20260902-07c8f729 kimi-k3-efa-v2:latest
+docker pull $ECR:$TAG
+docker tag  $ECR:$TAG kimi-k3-efa-v2:latest
+
+# Confirm you got the image you meant, on every host. The tag names the three
+# inputs that matter, so a mismatch is visible without a rebuild:
+docker run --rm --entrypoint bash kimi-k3-efa-v2:latest -lc \
+  'echo "EFA=$K3_EFA_INSTALLER arch=$K3_DEEPEP_ARCH"; cat /opt/DeepEP/BUILD_REF'
+# -> EFA=1.50.0 arch=10.3 / 97d8f9bcc1be31e9036db2ab591ef9b9f4e38619
 
 # --- single node (on P6-B300-1) ---
 NO_SPEC=1 bash 10_launch_standalone.sh   # first bring-up: base model only
@@ -94,18 +99,21 @@ MODE=pd PROFILE=low-latency ENDPOINT=localhost:8080 bash 92_sweep.sh
 bash sync.sh push && bash 93_matrix.sh    # ~1 h: 5 configs x 2 runs
 ```
 
-The ECR tag names the base sglang commit (`07c8f729`) and the build date, and the
-pull retags it to `kimi-k3-efa-v2:latest` because that is what `env_common.sh`
-defaults `IMAGE` to. It is pushed to two regions on purpose: p6-b300 capacity is
-scarce enough that the instance shows up wherever it shows up, and an image that
-lives in the wrong region is an extra 15 minutes at exactly the moment a spot
-instance is finally in hand. **Pull the dated tag, not `:latest`** — `:latest` moves, so a
-run recorded against it cannot be reproduced later. `deepep-v2-20260902-07c8f729`
-was built and verified on a p5.4xlarge: mooncake resolves to exactly one
-distribution (`mooncake-transfer-engine-efa-cuda13` 0.3.13.post1) whose
-`engine.so` links libfabric, all five K3 patches applied cleanly, and `deep_ep` is
-importable. It has **not** been run on a B300 yet — the image is verified, the
-model is not.
+The pull retags to `kimi-k3-efa-v2:latest` because that is what `env_common.sh`
+defaults `IMAGE` to. **Pull the dated tag, not `:latest`** — `:latest` moves (it was
+moved onto the 09-04 image), so a run recorded against it cannot be reproduced
+later. Regional duplication is deliberate where it exists: p6-b300 capacity is
+scarce enough that the instance shows up wherever it shows up, and an image in the
+wrong region is an extra 15 minutes at exactly the moment a spot instance is
+finally in hand.
+
+| tag | what it is |
+|---|---|
+| `deepep-v2-amzn97d8f9b-efa1.50.0-20260904-07c8f729` | **current.** amazon-contributing/DeepEP `97d8f9b` built from source, EFA installer pinned 1.50.0, mooncake `0.3.13.post1`, sm_103. `ap-northeast-2` only. Built on B300-1 and pulled to B300-2/3/4 — image config digest `sha256:98dd9d61…` verified identical on all four, `require_efa_image` passes on each, and `deep_ep` resolves to exactly one distribution (`2.1.0+97d8f9b`). K3 ran end-to-end on B300-1 from this image: decode graph captured, coherent tokens. |
+| `deepep-v2-20260902-07c8f729` | superseded. Bundled `sgl-deep-ep 0.1.2` and the **floating** EFA installer. Verified only on a p5.4xlarge (mooncake resolves to one distribution, `engine.so` links libfabric, five patches applied, `deep_ep` importable) and **never run on a B300** — the image was verified, the model was not. In both `ap-northeast-2` and `us-west-2`. |
+
+Do not mix the two inside one comparison; treat them as different image
+generations even though both are DeepEP 2.1.0.
 
 `93_matrix.sh` relaunches every configuration from scratch so all rows share one
 container generation, and gates each on `/health` plus a read-back of `dcp_size`,
@@ -172,9 +180,9 @@ Note what the swap does **not** buy: `direct` mode is NVLink, so all of the fork
 EFA work sits on the `hybrid` scale-out path and nothing measurable changes at
 today's geometry. It is the prerequisite for cross-node EP, not a speedup.
 
-**The prebuilt ECR tag above predates both changes** (`deepep-v2-20260902-07c8f729`
-was built with the floating EFA installer and the bundled `sgl-deep-ep`). Build
-from this Dockerfile, or publish a new tag, if you want the pinned stack.
+Both changes are in the published `…-amzn97d8f9b-efa1.50.0-20260904-…` tag; the
+older `deepep-v2-20260902-07c8f729` predates them. See the tag table
+[above](#quick-start).
 
 ### DeepEP v2
 
