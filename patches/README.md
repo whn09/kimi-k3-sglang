@@ -132,7 +132,7 @@ inserting `expert_start: int = 0` ahead of it is safe.
 
 - the GIN backend here is **GDAKI, `NCCL_GIN_TYPE=3`** — `EFA_GDA` (5) has no
   device to drive.
-- `sgl-deep-ep` asserts `ginType != NONE` even for a single-node `direct` run
+- DeepEP asserts `ginType != NONE` even for a single-node `direct` run
   (`csrc/kernels/backend/nccl.cu:87`), so the NICs cannot simply be excluded;
   without `--device=/dev/infiniband` NCCL sees no network and the assert fires.
 - **the two HCAs are on two IB planes with no path between them.** GDAKI context

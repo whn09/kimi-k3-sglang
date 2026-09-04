@@ -122,6 +122,60 @@ a fork for: the GPU-MR CUDA-context fix (upstream PR
 registration fan-out described [below](#bounding-the-fan-out-1387-s--207-s-on-the-dominant-batch).
 Override with `--build-arg MOONCAKE_PKG=...`.
 
+**The EFA installer is pinned to 1.50.0, and pinning it is not the point** — the
+gate is. `EFA_INSTALLER_VERSION` used to be `latest`, which is worse than merely
+unpinned: the fetch sits inside a cached `RUN` layer, so `latest` is only
+re-resolved when something above it changes, and the image claims freshness while
+shipping whatever was newest when that layer was first built. Pinning alone still
+would not be enough, because a **pre-GA** 1.50.0 tarball has the identical
+`## [1.50.0]` ChangeLog header but ships aws-ofi-nccl 1.20.0-1, which exports only
+`ncclGinPlugin_v11`/`_v13`. An image built on that one builds, runs, and silently
+serves the **type-2 CPU proxy** instead of EFA-GDA. So the build asserts the
+ChangeLog header *and* that the plugin it laid down exports `ncclGinPlugin_v14`,
+and fails loudly otherwise. Gate on the export, not the version string.
+
+**DeepEP is built from source, replacing the base image's `sgl-deep-ep` wheel.**
+`--build-arg DEEPEP_REF=` pins a commit of
+[amazon-contributing/DeepEP](https://github.com/amazon-contributing/DeepEP)
+(default `97d8f9b`) — the same tree the `ep-benchmarks-efa` kit measures as
+`deepep-v2-efa-official:sm103-97d8f9b`, and the only one carrying the EFA work
+(unordered GIN kernels, the [2,17] QP clamp, `kMaxParts`). sglang couples to
+DeepEP through exactly one name, `from deep_ep import ElasticBuffer`
+(`token_dispatcher/deepep_v2.py:39`); both trees are DeepEP 2.1.0 and every
+kwarg the dispatcher passes exists in the fork. Three things the build has to
+get right, each of which fails *after* the build if it does not:
+
+- v2 kernels JIT-compile at the **first dispatch**, with this base image's ptxas
+  13.0.88. The old `ptx.cuh` passed `st.bulk`'s size as a 32-bit operand, which
+  ptxas 13.0.88 rejects for sm_103 — so the image builds green and the server
+  dies on its first MoE token. Commit `e3fd436` widens it to 64-bit, which is why
+  no CUDA 13.3 base image is needed here (the standalone kit uses one). A grep on
+  `ptx.cuh` fails the build if `DEEPEP_REF` predates that commit.
+- `setup.py` emits `-l:libnccl.so.2` with **no `-L`**, so without `LIBRARY_PATH`
+  the linker resolves through ldconfig to the base image's apt `libnccl2 2.28.3`
+  (pre-GIN) and the link fails on `ncclGin*`. The build points it at the pip
+  `nvidia/nccl/lib` (2.30.7) instead. DeepEP's own `check_nccl_so()` byte-compares
+  loaded vs linked libnccl at runtime; `EP_SUPPRESS_NCCL_CHECK=1` is the escape
+  hatch if that ever misfires.
+- **two distributions owning one `deep_ep/` package dir** mixes `.py` from one
+  tree with `_C.so` from another and silently desyncs the handle arity — the same
+  trap as the two mooncake wheels. The old providers are enumerated by dist name
+  and uninstalled, and both the build stage and the preflight assert exactly one
+  owner (plus the absence of `sgl-deep-ep`'s `prerequisites.py`).
+
+`/opt/DeepEP/BUILD_REF` in the image records the sha actually built. It is written
+*after* the wheel on purpose: an untracked file inside the checkout makes the tree
+dirty, and DeepEP's `get_package_version()` then degrades the version from
+`2.1.0+97d8f9b` to `2.1.0+local` inside a bare `except`, i.e. without complaining.
+
+Note what the swap does **not** buy: `direct` mode is NVLink, so all of the fork's
+EFA work sits on the `hybrid` scale-out path and nothing measurable changes at
+today's geometry. It is the prerequisite for cross-node EP, not a speedup.
+
+**The prebuilt ECR tag above predates both changes** (`deepep-v2-20260902-07c8f729`
+was built with the floating EFA installer and the bundled `sgl-deep-ep`). Build
+from this Dockerfile, or publish a new tag, if you want the pinned stack.
+
 ### DeepEP v2
 
 K3's MoE runs on `--moe-a2a-backend deepep_v2` + `--moe-runner-backend deep_gemm`,
@@ -180,12 +234,27 @@ Two things to know before changing these:
 baseline, and puts the chunk back to 16384 so the comparison is not rigged.
 
 Which NCCL GIN backend DeepEP v2 uses is auto-detected (`detect_gin`), because
-sgl-deep-ep aborts on a `NONE` gin type even for a single-node `direct` run:
-type **5** (EFA_GDA) on an EFA box, type **3** (GDAKI) plus a one-plane
-`NCCL_IB_HCA` pin on the InfiniBand-only B300. Type 5 on p6-b300 is **unverified**
-— it is confirmed on p5en's gen-2 EFA, not on this generation's factory stack, so
-it is the first thing to suspect if startup aborts on the GIN assert
-(`NCCL_DEBUG_SUBSYS=GIN` prints which backend was selected).
+DeepEP aborts on a `NONE` gin type even for a single-node `direct` run:
+type **3** (GDAKI) plus a one-plane `NCCL_IB_HCA` pin whenever an IB device
+exists, type **5** (EFA_GDA) only on a box that has no IB device at all.
+
+**Prefer 3 even on a box full of EFA rails.** p6-b300 has 18 HCAs (16 EFA
+`rdmap*` + 2 ConnectX-7 `ibp*`, all `PORT_ACTIVE`), and type 5 there initializes,
+loads all 214 GB of weights, and then dies at **decode CUDA graph capture**:
+
+```
+RuntimeError: NCCL exception (csrc/kernels/backend/nccl.cu:108): 5
+  (GIN strong signals are required, but the GIN plugin does not support them.)
+```
+
+The masked-decode kernel needs GIN strong signals; EFA_GDA does not implement
+them and GDAKI does. sglang wraps that as "Capture cuda graph failed" and appends
+its generic OOM "Possible solutions" list — **all irrelevant**, so do not go
+chasing memory. Type 3 on the same box comes up serving in ~6 min. The same error
+at `nccl.cu:188` instead, i.e. at `ElasticBuffer` construction rather than graph
+capture, means the container is missing `--device=/dev/infiniband` or
+`NCCL_GIN_TYPE` entirely. `NCCL_DEBUG_SUBSYS=GIN` prints which backend was
+selected.
 
 Startup takes ~11 min: ~6 min to load 1.5 TB of weights, then FlashInfer
 autotune + CUDA graph capture. **GPU utilisation reads 0% for almost all of
