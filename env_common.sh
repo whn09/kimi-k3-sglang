@@ -463,10 +463,13 @@ EFA_HCA="${EFA_HCA-$(pick_efa_hca)}"
 PRIMARY_IFACE="${PRIMARY_IFACE:-enp71s0}"
 # These are re-assigned on every instance restart -- re-check with
 # `ssh B300-N hostname -I` before a PD run, or bootstrap silently times out.
-B300_1_IP="${B300_1_IP:-172.31.30.164}"  # B300-1 / i-04f949e0b7779c0a6 (2026-09-04 CB)
-B300_2_IP="${B300_2_IP:-172.31.28.101}"  # B300-2 / i-0b5b67d579231b60b (2026-09-04 CB)
-B300_3_IP="${B300_3_IP:-172.31.30.41}"   # B300-3 / i-0f58d1d2ed885a1d4 (2026-09-04 CB)
-B300_4_IP="${B300_4_IP:-172.31.21.43}"   # B300-4 / i-0f5aef3e6a9f5f43e (2026-09-04 CB)
+# 2026-09-05 rebuild. These are the PRIMARY (enp71s0) addresses -- `hostname -I`
+# lists all 18 interfaces on a b300 and its first entry is not reliably the ENA
+# one, so take them from `ip route get 1.1.1.1` instead.
+B300_1_IP="${B300_1_IP:-172.31.17.128}"  # B300-1 / i-0c0e3527fe020d581 (2026-09-05)
+B300_2_IP="${B300_2_IP:-172.31.29.80}"   # B300-2 / i-05d9502274ebc7d80 (2026-09-05)
+B300_3_IP="${B300_3_IP:-172.31.26.115}"  # B300-3 / i-0355050cfbc695dd1 (2026-09-05)
+B300_4_IP="${B300_4_IP:-172.31.26.251}"  # B300-4 / i-0005209032eb19483 (2026-09-05)
 
 # The drivers speak in ssh ALIASES (B300-1) because that is the only handle the
 # laptop has on a host; the launchers and both routers need IPs. One mapping, so

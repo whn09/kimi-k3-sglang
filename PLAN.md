@@ -155,10 +155,12 @@ overwrites only the tags it produces.
 ## 5. Prerequisites, in order (5 minutes, and skipping one costs an hour)
 
 ```bash
-# 1. Four IPs. They survive a stop/start, the ssh aliases do not always.
-#    B300-1 172.31.30.164  B300-2 172.31.28.101
-#    B300-3 172.31.30.41   B300-4 172.31.21.43     (ap-northeast-2)
-for h in B300-1 B300-2 B300-3 B300-4; do ssh $h hostname -I; done
+# 1. Four IPs, and they are in env_common.sh, not in the ssh aliases. A rebuild
+#    changes them; `hostname -I` lists all 18 b300 interfaces and its first entry
+#    is not reliably the ENA one, so read them with `ip route get`:
+#    B300-1 172.31.17.128  B300-2 172.31.29.80
+#    B300-3 172.31.26.115  B300-4 172.31.26.251    (ap-northeast-2, 2026-09-05)
+for h in B300-1 B300-2 B300-3 B300-4; do echo -n "$h "; ssh $h "ip route get 1.1.1.1 | grep -o 'src [0-9.]*'"; done
 
 # 2. Scripts up to date on all four (skips unreachable hosts, never --delete)
 bash sync.sh push
