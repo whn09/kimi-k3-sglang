@@ -31,7 +31,10 @@ fi
 
 require_efa_image "$IMAGE"
 
+# --init: reaps the TP workers. Without it `docker rm -f` fails on a zombie
+#   PID 1, which makes the `docker rm -f` above abort the NEXT launch.
 docker run -d --name "$NAME" \
+    --init \
     --gpus all \
     --net=host --ipc=host \
     --ulimit memlock=-1 --ulimit stack=67108864 \

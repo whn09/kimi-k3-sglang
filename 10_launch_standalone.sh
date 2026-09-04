@@ -31,7 +31,12 @@ require_efa_image "$IMAGE"
 #   run used. Standalone was the odd one out, which made it the only arm where a
 #   GIN init failure could be a permissions artefact rather than the real thing.
 # --shm-size=600g: TP=8 loading 1.5 TB of shards moves a lot through /dev/shm.
+# --init: TP=8 leaves 8 unreaped children, and without an init as PID 1 a
+#   `docker rm -f` fails with "PID ... is zombie and can not be killed". That is
+#   not just an untidy teardown -- the `docker rm -f` at the top of this script
+#   would then fail under `set -e` and abort the NEXT launch. Hit 2026-09-04.
 docker run -d --name "$NAME" \
+    --init \
     --gpus all \
     --net=host --ipc=host \
     --ulimit memlock=-1 --ulimit stack=67108864 \
