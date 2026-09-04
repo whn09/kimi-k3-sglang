@@ -155,13 +155,25 @@ RUN set -eu; \
 # by skipping the uninstall -- that resurrects the mixed-provenance directory,
 # where the EP device library is the one built WITHOUT EFA.
 ARG MOONCAKE_PKG=mooncake-transfer-engine-efa-cuda13
+# Empty = take whatever pip resolves, which is the right default for a single
+# host chasing the newest fix. Set it when several hosts must end up with the
+# SAME image: this is the only unpinned input left in the file (base image tag,
+# EFA installer, gdrcopy and the DeepEP sha are all pinned), so without it two
+# builds a wheel-release apart are silently different images.
+#   docker build --build-arg MOONCAKE_VER=0.3.13.post1 ...
+# Kept separate from MOONCAKE_PKG rather than folded into it because the check
+# below looks the distribution up by name, and `name==version` is not a name.
+ARG MOONCAKE_VER=
 RUN set -eu; \
     SP=$(python3 -c "import sysconfig; print(sysconfig.get_paths()['purelib'])"); \
     old=$(pip list --format=freeze 2>/dev/null | sed -n 's/^\(mooncake[^=]*\)==.*/\1/p' | tr '\n' ' '); \
     echo "removing pre-installed mooncake distributions: ${old:-<none>}"; \
     if [ -n "$old" ]; then pip uninstall -y $old; fi; \
     rm -rf "$SP/mooncake" "$SP"/mooncake*.libs; \
-    pip install --no-cache-dir "$MOONCAKE_PKG"; \
+    SPEC="$MOONCAKE_PKG"; \
+    if [ -n "${MOONCAKE_VER:-}" ]; then SPEC="$MOONCAKE_PKG==$MOONCAKE_VER"; fi; \
+    echo "installing mooncake: $SPEC"; \
+    pip install --no-cache-dir "$SPEC"; \
     python3 -c "import importlib.metadata as m; print('mooncake wheel:', '$MOONCAKE_PKG', m.version('$MOONCAKE_PKG'))"; \
     n=$(pip list --format=freeze 2>/dev/null | grep -c '^mooncake' || true); \
     test "$n" -eq 1 || { echo "FATAL: $n mooncake distributions installed, expected exactly 1:"; \
