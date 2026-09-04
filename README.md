@@ -391,6 +391,62 @@ numbers were taken; it now runs on DeepEP v2 + `deep_gemm` by default (above), s
 treat this section as the plain-TP baseline — reproduce it with
 `MOE_A2A_BACKEND=none`.
 
+### Cross-node EP=16: it runs on GIN type 5, and the unified arm is prefill-bound
+
+2026-09-04, one unified instance over B300-1 + B300-2, `TP_SIZE=16 EP_SIZE=16`,
+`DEEPEP_V2_MODE=hybrid`, `gin=5 hca=rdmap`, image `kimi-k3-efa-v2:nccl2312`,
+`PROFILE=low-latency`, `MEM_FRACTION=0.78`, `CAP=CHUNK=1024`. README point
+ISL 8192 / OSL 1024 / n=64 / c32:
+
+| | value |
+|---|---|
+| output tok/s | 284.97 |
+| input tok/s | 2279.76 |
+| total tok/s | 2564.73 |
+| duration | 229.98 s |
+| TTFT mean / p50 / p99 | 29781 / 18311 / 93677 ms |
+| TPOT mean / p50 | 79.97 / 72.86 ms |
+| ITL p50 / p99 | 14.77 / 1636 ms |
+| achieved concurrency | 31.05 |
+| accept length | 7.11 |
+
+64/64 successful, 524 288 in / 65 536 out, no errors. **Read this as a
+plumbing result, not a performance result** — and specifically do not read it
+against the 1441–1507 tok/s plain-TP row below, because two axes moved at once
+and the second one dominates:
+
+**The confound, isolated on the same live instance.** Re-running only the input
+length — nothing relaunched, nothing retuned — moves the prefill share of wall
+clock from 80% to 33% and the output throughput by 3.3x:
+
+| ISL | duration | output tok/s | total tok/s | mean TTFT | mean TPOT | prefill share of wall clock |
+|---|---|---|---|---|---|---|
+| 8192 | 229.98 s | 284.97 | 2564.73 | 29781 ms | 79.97 ms | ~80% |
+| 1024 | 68.79 s | **952.72** | 1905.43 | 4077 ms | 24.08 ms | ~33% |
+
+Both rows are OSL 1024 / n=64 / c32 on the same server process, so the only
+thing that changed is how much of the run is spent in the chunked prefill path.
+Details:
+
+- **The wall clock is prefill.** Every `Prefill batch` line reports
+  ~2 790–2 858 tok/s input, so 524 288 input tokens cost ≈185 s of the 230 s
+  duration — 80% of the run. TTFT is 61% of E2E latency for the same reason.
+- **Decode is fine.** At `#running-req: 32` the server's own
+  `gen throughput` is **2 081–2 090 tok/s** with `accept len 0.95` and
+  `cuda graph: True`, i.e. *higher* than the whole plain-TP arm's end-to-end
+  output throughput. The cross-node a2a is not what makes this row slow.
+- **`CHUNK=1024` is the handicap, and it is structural here.** The plain-TP
+  baseline ran `STANDALONE_CHUNK=16384` (the `MOE_A2A_BACKEND=none` default);
+  with v2 the chunk is clamped to CAP, and prefill is near-linear in chunk
+  (§"Prefill CAP" below: 2048 → 8192 is +158%). A unified server cannot buy its
+  way out — CAP has to stay at 1024 for decode graph capture to fit, which is
+  exactly the trade the PD split exists to break.
+
+So the next arm is not "more nodes", it is **PD at EP=16**: a 2-node TP=16
+prefill instance at `CAP=CHUNK=8192` with `--disable-cuda-graph`, and a 2-node
+TP=16 decode instance at `CAP=128`. That needs `kimi-k3-efa-v2:nccl2312` on
+B300-3/B300-4, which has not been built there yet.
+
 ### 2P2D: it runs, and it is decode-admission-bound, not prefill-bound
 
 2026-09-04, prefill on B300-1/B300-2 and decode on B300-3/B300-4, one router on
