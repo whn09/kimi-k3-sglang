@@ -358,13 +358,30 @@ IB_HCA="${IB_HCA:-$(pick_ib_hca)}"
 # Primary ENA interface (the other 16 enpXX are EFA-only rails).
 PRIMARY_IFACE="${PRIMARY_IFACE:-enp71s0}"
 # These are re-assigned on every instance restart -- re-check with
-# `ssh P6-B300-N hostname -I` before a PD run, or bootstrap silently times out.
-B300_1_IP="${B300_1_IP:-172.31.24.154}"  # B300-1 / i-062fb296bacd17e04 (2026-09-03 CB)
-B300_2_IP="${B300_2_IP:-172.31.17.223}"  # B300-2 / i-0578b3d904b177fc2 (2026-09-03 CB)
+# `ssh B300-N hostname -I` before a PD run, or bootstrap silently times out.
+B300_1_IP="${B300_1_IP:-172.31.30.164}"  # B300-1 / i-04f949e0b7779c0a6 (2026-09-04 CB)
+B300_2_IP="${B300_2_IP:-172.31.28.101}"  # B300-2 / i-0b5b67d579231b60b (2026-09-04 CB)
+B300_3_IP="${B300_3_IP:-172.31.30.41}"   # B300-3 / i-0f58d1d2ed885a1d4 (2026-09-04 CB)
+B300_4_IP="${B300_4_IP:-172.31.21.43}"   # B300-4 / i-0f5aef3e6a9f5f43e (2026-09-04 CB)
 
-# PD disaggregation
+# PD disaggregation.
+#
+# PREFILL_IPS / DECODE_IPS are space-separated LISTS -- one entry per node on that
+# side -- and are the only thing that decides the topology. 20_/21_ are already
+# node-agnostic (each just serves one TP=8 instance on whatever host it runs on,
+# and neither references the other side's address: prefill only publishes
+# BOOTSTRAP_PORT, and decode learns the prefill address from the bootstrap info
+# the router attaches to each request). So scaling 1P1D -> 2P2D is entirely a
+# router-side change plus running 20_/21_ on more hosts.
+#
+# PREFILL_IP / DECODE_IP are kept as the single-node names so an existing
+# `PREFILL_IP=... bash 22_launch_router.sh` still means 1P1D.
 PREFILL_IP="${PREFILL_IP:-$B300_1_IP}"
 DECODE_IP="${DECODE_IP:-$B300_2_IP}"
+PREFILL_IPS="${PREFILL_IPS:-$PREFILL_IP}"
+DECODE_IPS="${DECODE_IPS:-$DECODE_IP}"
+# Same port on every node of a side: each node is a separate host, so there is no
+# collision, and a per-node port would have to be threaded into 20_/21_ too.
 BOOTSTRAP_PORT="${BOOTSTRAP_PORT:-8998}"
 ROUTER_PORT="${ROUTER_PORT:-8080}"
 
