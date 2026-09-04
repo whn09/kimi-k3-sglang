@@ -224,14 +224,31 @@ fi
 
 # DECODE: graphs ON -- they are worth far more than the chunk they cost (measured
 # 8K/1K conc 16: 3.27x end-to-end, ITL p50 43.54 vs 255.24 ms; break-even is ~52
-# output tokens). 1024 is the largest CAP that still fits alongside the capture
-# pool (18.48 + 10.5 <= 38.99 GB), so it is the default.
+# output tokens).
 #
-# Smaller may be FASTER, not just smaller: on DSV4/B300 dropping the decode
-# capacity 2048 -> 256 was -16% step time / +18% tok/s, because the fixed-capacity
-# a2a moves less. Untested on K3. To try it, see DECODE_CGMAXBS below -- 256 is
-# NOT reachable at the default graph batch sizes with speculative decoding on.
-DECODE_CAP="${DECODE_CAP:-1024}"
+# *** 1024 DOES NOT BOOT ON A PD DECODE NODE. *** It was the default here for a
+# while on the strength of a UNIFIED-server measurement (capture pool 18.48 GB +
+# ElasticBuffer 10.5 <= 38.99 GB free). The PD decode node also loads
+# Kimi-K3-DSpark and enables symm-mem, so the same arithmetic does not hold: it
+# dies in capture with `Tried to allocate 10.50 GiB ... 22.90 GiB allocated in
+# private pools` (measured 2026-09-03, PROFILE=low-latency, and again worked
+# around by hand during the 2P2D bring-up on 2026-09-04). 512 is the largest
+# value observed to boot there, so it is the default.
+#
+# Smaller is also FASTER, and on K3 that is now measured, not inherited from
+# DSV4: at ISL 8192 / OSL 1024 / c32 with max_running_requests pinned to 16 in
+# both arms, CAP=128 beat CAP=512 by +6.3% output tok/s / -6.2% TPOT, and left
+# 8.57 GB more free after capture. It is not the default anyway, because
+#     max_running_requests * (SPEC_BLOCK_SIZE + 1) <= CAP
+# (see DECODE_MAXRUN) makes CAP=128 imply MAXRUN <= 16, i.e. only 16 decode
+# slots per node -- and at the README point that admission limit, not the a2a, is
+# what caps end-to-end throughput. 512 leaves DSPARK's own choice of 48 legal
+# (48 * 8 = 384 <= 512) and needs no MAXRUN. To chase the -6.2% TPOT instead of
+# slots, set DECODE_CAP=128 DECODE_MAXRUN=16 DECODE_CGMAXBS=16 together.
+#   Residual gap: 512 has only ever been booted with MAXRUN pinned to 16. The
+#   capture pool is sized by CAP and not by how many shapes are captured
+#   (measured), so MAXRUN=48 should be free, but it is inference, not a reading.
+DECODE_CAP="${DECODE_CAP:-512}"
 # Decode still needs a chunked-prefill size, even though it does no real prefill.
 # 2026-09-03: the "is the prefill-budget check gated on --disaggregation-mode"
 # question is now ANSWERED -- moe_hook.py:376 is `if view.disaggregation_mode !=

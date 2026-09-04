@@ -35,7 +35,7 @@ Models live on `/opt/dlami/nvme` (27 TB); host python venv is `/opt/pytorch`.
 | `00_download_models.sh` | host | fetch both models to NVMe |
 | `10_launch_standalone.sh` | host | single-node container |
 | `20_launch_prefill.sh` / `21_launch_decode.sh` | host | PD containers |
-| `22_launch_router.sh` | host | `sglang_router` in front of the P/D pair |
+| `22_launch_router.sh` | host | `sglang_router` in front of the P/D nodes (any NPND) |
 | `start_standalone.sh` / `start_prefill.sh` / `start_decode.sh` | container | the actual `sglang.launch_server` invocations |
 | `90_smoke_test.sh` / `91_bench.sh` | host | health + chat + streaming; `bench_serving` |
 | `92_sweep.sh` | host | concurrency sweep driver over `91_bench.sh` |
@@ -90,6 +90,19 @@ bash 20_launch_prefill.sh    # on B300-1
 bash 21_launch_decode.sh     # on B300-2
 bash 22_launch_router.sh     # on B300-1
 ENDPOINT=localhost:8080 bash 90_smoke_test.sh
+
+# --- 2P2D (prefill on B300-1/2, decode on B300-3/4) ---
+# 20_/21_ are node-agnostic: each serves one TP=8 instance on whatever host it
+# runs on, and neither knows the other side's address. The topology lives only in
+# the router, so scaling out is the same two commands on more hosts plus lists.
+bash 20_launch_prefill.sh    # on B300-1 AND B300-2
+bash 21_launch_decode.sh     # on B300-3 AND B300-4
+PREFILL_IPS="$B300_1_IP $B300_2_IP" \
+DECODE_IPS="$B300_3_IP $B300_4_IP" bash 22_launch_router.sh   # on B300-1
+ENDPOINT=localhost:8080 bash 90_smoke_test.sh
+# Verify all four registered, not just one per side -- a router that came up with
+# 2 workers instead of 4 looks identical from the client:
+curl -s localhost:8080/workers
 
 # benchmark
 MODE=pd PROFILE=low-latency ENDPOINT=localhost:8080 bash 91_bench.sh
@@ -284,6 +297,45 @@ defaults the draft to `trtllm_mha`. The MoE ran on `flashinfer_mxfp4` when these
 numbers were taken; it now runs on DeepEP v2 + `deep_gemm` by default (above), so
 treat this section as the plain-TP baseline — reproduce it with
 `MOE_A2A_BACKEND=none`.
+
+### 2P2D: it runs, and it is decode-admission-bound, not prefill-bound
+
+2026-09-04, prefill on B300-1/B300-2 and decode on B300-3/B300-4, one router on
+B300-1, image `deepep-v2-amzn97d8f9b-efa1.50.0-20260904-07c8f729`,
+`PROFILE=low-latency`, prefill `CAP=CHUNK=8192`, decode `CAP=128 CHUNK=512
+MAXRUN=16 CGMAXBS=16`. README point ISL 8192 / OSL 1024 / n=64 / c32:
+
+| | value |
+|---|---|
+| output tok/s | 1272.94 |
+| input tok/s | 10183.53 |
+| duration | 51.48 s |
+| TTFT mean / p90 | 17411 / 33754 ms |
+| TPOT mean / p50 | 6.26 / 6.33 ms |
+| ITL p50 | 45.14 ms |
+| achieved concurrency | 29.61 |
+
+**All four workers register and all four carry traffic** — 42/39 prefill batches
+and 1006/979 decode batches, so `cache_aware` + `follow_bootstrap_room` balances
+both sides. Correctness is fine (arithmetic and streaming both good through the
+router).
+
+**Do not compare this to the 1683 tok/s 1P1D figure below.** That was taken on the
+previous image generation (the base image's bundled `sgl-deep-ep`), and this one
+builds `amazon-contributing/DeepEP` from source; two axes moved at once. A matched
+1P1D arm on this image has not been run.
+
+**What the run does say, from the prefill node's own log:** per-node prefill
+throughput is **~22 000 tok/s** while the run only consumed 10 183 across two
+nodes (≈5 100 each), with `#queue-req: 0` and `#inflight-req: 1-2` throughout.
+The prefill nodes were idle ~77% of the time, i.e. *starved*, and TTFT is 73% of
+E2E latency because requests wait for a decode slot rather than for prefill
+compute. Both decode nodes sat at their `max_running_requests` ceiling (16 and 11
+observed), and that ceiling is forced by `DECODE_CAP=128` through
+`MAXRUN * (SPEC_BLOCK_SIZE+1) <= CAP`. So the binding constraint at this operating
+point is 32 decode slots, not the a2a and not the wire — which means the right
+next arm is `DECODE_CAP=512` (48 slots/node by DSPARK's own choice) at a higher
+concurrency, not more nodes.
 
 ### Profile matrix
 
@@ -684,6 +736,42 @@ and the sweep above says that direction backfires), or shrink the per-buffer NIC
 fan-out so there is simply less to register.
 
 ## Notes and pitfalls
+
+**A host can get stuck unable to allocate NVLS multicast, and only the
+fabricmanager log says so.** Symptom on the *server* side is eight ranks dying at
+`Init torch distributed` with
+
+```
+transport/nvls.cc:379 (nvlsAllocateMem) NCCL WARN Failed to bind NVLink SHARP
+  (NVLS) Multicast memory of size 2097152 : CUDA error 401
+  'the operation cannot be performed in the present state'
+RuntimeError: NCCL error: unhandled cuda error
+```
+
+`nvidia-smi` is entirely clean when this happens — 0 MiB used, no compute apps,
+`Fabric State: Completed / Status: Success` on all 8 GPUs, `nvidia-fabricmanager`
+active, same driver as the healthy hosts. The diagnosis is only in
+`/var/log/fabricmanager.log`:
+
+```
+requesting GPU handle 0x0 is different from exporter GPU handle 0x815b...
+failed to add multicast team with request ID 0x... in partition 57082.
+All GPUs in the partition need to be reset to recover
+```
+
+i.e. a multicast team leaked when an earlier process was killed, and FM now
+refuses new ones. NCCL's own suggestion (`NCCL_NVLS_ENABLE=0`) would only hide
+it. Recovery, with no containers running on that host:
+
+```bash
+sudo systemctl stop nvidia-fabricmanager
+sudo nvidia-smi -r                      # all 8 GPUs reset, ~1 min
+sudo systemctl start nvidia-fabricmanager
+```
+
+Hit on B300-1 during the 2P2D bring-up (2026-09-04); the other three hosts
+allocated multicast normally at the same moment, so compare FM logs across hosts
+rather than assuming a fleet-wide problem.
 
 **The upstream image cannot do PD over EFA.** `lmsysorg/sglang:kimi-k3` ships a
 pip `mooncake` wheel with **zero** EFA symbols, plus generic libfabric 1.20 (no
