@@ -442,10 +442,51 @@ Details:
   way out — CAP has to stay at 1024 for decode graph capture to fit, which is
   exactly the trade the PD split exists to break.
 
-So the next arm is not "more nodes", it is **PD at EP=16**: a 2-node TP=16
-prefill instance at `CAP=CHUNK=8192` with `--disable-cuda-graph`, and a 2-node
-TP=16 decode instance at `CAP=128`. That needs `kimi-k3-efa-v2:nccl2312` on
-B300-3/B300-4, which has not been built there yet.
+### PD with a cross-node-EP prefill side: 285 → 1047 tok/s
+
+Same day, and it confirms the diagnosis above. Prefill is the 2-node TP=16 /
+ep=16 / `hybrid` / `gin=5` instance on B300-1 + B300-2 at `CAP=CHUNK=8192`
+(`--disable-cuda-graph`, `MEM_FRACTION=0.78`); decode is a **single-node TP=8 /
+ep=8 / `direct` / `gin=3`** instance on B300-4 at `CAP=512`, `MEM_FRACTION=0.85`;
+router on B300-1 with one prefill and one decode URL. Same ISL 8192 / OSL 1024 /
+n=64 / c32.
+
+| arm | out tok/s | in tok/s | duration | TTFT mean / p50 | TPOT mean | conc |
+|---|---|---|---|---|---|---|
+| unified 2-node ep=16, `CAP=CHUNK=1024` | 284.97 | 2279.76 | 229.98 s | 29781 / 18311 ms | 79.97 ms | 31.05 |
+| PD, prefill 2-node ep=16 `CAP=8192` | **1046.54** | **8372.36** | 62.62 s | 6180 / 4342 ms | 17.78 ms | 24.90 |
+
+**3.67x on both input and output throughput, from raising the chunk alone** —
+same prefill hardware, same image, same GIN backend, same a2a. TTFT drops 4.8x.
+That is the CAP knee, not the wire; the unified arm's 285 tok/s was never an a2a
+result.
+
+Do not read this against the 1272.94 tok/s all-`ep=8` **2P2D** row below: that
+one has *two* decode nodes and this one has one, which is why its TPOT is 6.26 ms
+against 17.78 ms here while its TTFT is 2.8x worse. Achieved concurrency here is
+24.90 of 32, i.e. the single decode node is now the limit.
+
+**Two asymmetries in this arm are deliberate and both are load-bearing:**
+
+- **`tp_size` 16 (prefill) vs 8 (decode).** The router logs it as
+  `WARN ... conflicting tp_size: prefill=Some("16"), decode=Some("8")` and then
+  works — registration, KV transfer over Mooncake/EFA, and streaming are all
+  fine. It is a warning, not a defect.
+- **`gin=5` on prefill, `gin=3` on decode.** `NCCL_GIN_TYPE=5` **fails on a
+  single-node `ep=8 mode=direct` instance**: `_C.ElasticBuffer(...)` →
+  `nccl.cu:188): 3 (GIN: DevComm setup failed on all available backends)`, raised
+  through `Capture cuda graph failed:` at `init_all_cuda_graphs`. The same host
+  and image with `GIN_TYPE=3` comes up clean. So the rule is **type 5 for a
+  cross-node (`hybrid`) instance, type 3 for a single-node (`direct`) one** —
+  which costs nothing here, because a `direct` instance keeps its a2a on NVLink
+  anyway.
+  This is *not* a Mooncake conflict: the prefill node brings up Mooncake's 16 EFA
+  endpoints at 09:40:31 and then builds its ElasticBuffer at 09:43:59
+  (`world_size=16 ... num_bytes=1233125376`) on type 5 without complaint.
+
+Still not run: the **full 2P2D at EP=16** (both sides 2-node TP=16, all four
+B300s). B300-3 was occupied by an unrelated `lmsysorg/sglang:hy4-preview`
+container on GPUs 0–3 for the whole session, so only three hosts were available.
 
 ### 2P2D: it runs, and it is decode-admission-bound, not prefill-bound
 
