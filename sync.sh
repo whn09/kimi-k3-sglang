@@ -16,11 +16,19 @@ cd "$(dirname "$0")"
 # COLLEAGUE's us-west-2 machines (see the "别动" note in ~/.ssh/config); a bare
 # `bash sync.sh` used to rsync this whole tree into them. B300-1/B300-2 are the
 # aliases for our own boxes, re-pointed each time a pair is launched.
-HOSTS="${HOSTS:-B300-1 B300-2}"
+# All FOUR, because the matched-capacity campaign (94_matched.sh) places
+# instances on every one of them and each host writes its own results/. A host
+# that is stopped is skipped with a warning rather than aborting the push: the
+# common case is a 2-machine campaign on a 4-machine alias list, and failing
+# there would mean the scripts silently go stale on the two hosts that ARE up.
+HOSTS="${HOSTS:-B300-1 B300-2 B300-3 B300-4}"
 REMOTE="${REMOTE:-/home/ubuntu/kimi-k3-sglang}"
+
+up() { ssh -o ConnectTimeout=10 -o BatchMode=yes "$1" true 2>/dev/null; }
 
 push() {
     for h in $HOSTS; do
+        if ! up "$h"; then echo "SKIP  $h (unreachable)"; continue; fi
         rsync -az --exclude 'results/' --exclude '.git/' ./ "$h:$REMOTE/"
         echo "pushed -> $h"
     done
@@ -29,6 +37,7 @@ push() {
 pull() {
     mkdir -p results
     for h in $HOSTS; do
+        if ! up "$h"; then echo "SKIP  $h (unreachable)"; continue; fi
         rsync -az "$h:$REMOTE/results/" results/ 2>/dev/null && echo "pulled <- $h" \
             || echo "no results on $h"
     done

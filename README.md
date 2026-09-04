@@ -39,8 +39,12 @@ Models live on `/opt/dlami/nvme` (27 TB); host python venv is `/opt/pytorch`.
 | `start_standalone.sh` / `start_prefill.sh` / `start_decode.sh` | container | the actual `sglang.launch_server` invocations |
 | `90_smoke_test.sh` / `91_bench.sh` | host | health + chat + streaming; `bench_serving` |
 | `92_sweep.sh` | host | concurrency sweep driver over `91_bench.sh` |
+| `23_launch_agg_router.sh` | host | `sglang_router` in front of N **independent** single-node servers — the matched-capacity baseline |
 | `93_matrix.sh` | laptop | profile-matrix driver: relaunch + verify + bench each config |
-| `sync.sh` | laptop | push scripts to both hosts, pull `results/` back |
+| `94_matched.sh` | laptop | matched-capacity campaign: PD vs the same machines run separately (see [`PLAN.md`](PLAN.md)) |
+| `lib_drive.sh` | laptop | shared driver helpers for `94_matched.sh` (preflight, teardown, container-env asserts) |
+| `gen_matched_table.py` | laptop | the PD-vs-baseline comparison table, computed from the JSON |
+| `sync.sh` | laptop | push scripts to all four hosts, pull `results/` back |
 
 `PROFILE=low-latency|balanced|high-throughput` selects the upstream serving
 variant; `env_common.sh` documents which knobs each one moves, and they differ
@@ -375,6 +379,46 @@ autotune + CUDA graph capture. **GPU utilisation reads 0% for almost all of
 it** — the bottleneck is disk→H2D, then kernel JIT. Watch
 `nvidia-smi --query-gpu=memory.used` climb (~200 GB/GPU after load, ~232 GB
 once the KV/mamba cache is allocated) rather than utilisation.
+
+## Matched-capacity campaign: does PD beat the same machines run separately?
+
+Everything in `## Results` below compares configurations, not *deployments*. The
+question that actually matters — at 4 machines, does 2P2D beat 4 independent
+single-node servers, on input **and** output throughput? — needs an experiment
+none of those rows is: a matched machine count, a matched client, and a baseline
+that is actually run rather than extrapolated. **[`PLAN.md`](PLAN.md) is that
+experiment**, ready to run; `94_matched.sh` executes it.
+
+```bash
+bash sync.sh push
+DRY_RUN=1 bash 94_matched.sh                  # rehearse with no machines
+bash 94_matched.sh                            # stage A: 4 machines, ISL 8192 / OSL 1024
+MACHINE_BUDGET=2 ARMS="agg2:tp agg2:v2 pd1p1d" bash 94_matched.sh
+WL=prefill ARMS="agg4:tp pd3p1d pd2p2d" bash 94_matched.sh   # 8192/1    prefill stress
+WL=decode  ARMS="agg4:tp pd1p3d pd2p2d" bash 94_matched.sh   # 128/1024  decode stress
+bash sync.sh pull && python3 gen_matched_table.py results
+```
+
+Three things about it are worth knowing before reading any of the older rows:
+
+- **The published c=32 point cannot answer the question.** One standalone node
+  does 1441–1506 out tok/s there, while the 4-machine pd2x2 arm does 1421.72 and
+  achieves only 27.30 of its 32 slots — both arms were client-limited, so a c=32
+  comparison at 4 machines measures the client. `94_matched.sh` therefore holds
+  **offered load per machine** constant (`c = machines × CONC_PER_MACHINE`,
+  default `8 16 32`), which puts the top point deliberately above the decode-slot
+  ceiling.
+- **The baseline family is two arms.** A unified v2 server is stuck at
+  `CAP=CHUNK=1024` (decode graph capture must fit) while plain TP gets
+  `CHUNK=16384`, so `agg4:tp` is the strongest single-node adversary and runs
+  first. `agg4:v2` is the apples-to-apples MoE-path row. Running only one of them
+  would be either a straw man or an unattributable win.
+- **`agg4:v2` / `agg2:v2` have never actually run.** Single-node v2 did not boot
+  on the current image at all: `detect_gin()` returns 5 on b300, type 5 needs more
+  than one node, and the server died in `_C.ElasticBuffer(...)` with
+  `GIN: DevComm setup failed on all available backends` — surfaced as the
+  unhelpful `Capture cuda graph failed:`. `env_common.sh` now forces `GIN_TYPE=3`
+  when `NNODES == 1`; the first run of those arms is the test of that fix.
 
 ## Results
 

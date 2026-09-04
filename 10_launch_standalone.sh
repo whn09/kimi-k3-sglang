@@ -61,6 +61,7 @@ docker run -d --name "$NAME" \
     -e DCP_SIZE="$STANDALONE_DCP_SIZE" \
     -e CUSTOM_AR="$STANDALONE_CUSTOM_AR" \
     -e NCCL_DEBUG="${NCCL_DEBUG:-WARN}" \
+    -e DISABLE_RADIX="${DISABLE_RADIX:-0}" \
     -e MOE_A2A_BACKEND="$MOE_A2A_BACKEND" \
     -e EP_SIZE="$EP_SIZE" \
     -e DEEPEP_V2_MODE="$DEEPEP_V2_MODE" \

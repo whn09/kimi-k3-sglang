@@ -4,6 +4,8 @@
 #   bash 91_bench.sh                                  # standalone, 1k/1k, 32 concurrent
 #   ENDPOINT=localhost:8080 bash 91_bench.sh          # via the PD router
 #   ISL=4096 OSL=512 NUM_PROMPTS=128 CONCURRENCY=64 bash 91_bench.sh
+#   WL=mixed MODE=pd bash 91_bench.sh                 # named shape (env_common.sh)
+#   WL=decode MODE=agg MACHINES=4 bash 91_bench.sh    # the aggregated baseline
 #
 # Raw output is tee'd to $RESULTS_DIR/<TAG>.log and the JSON summary written
 # alongside it, so a whole sweep leaves an auditable trail.
@@ -12,23 +14,36 @@ set -uo pipefail
 cd "$(dirname "$0")"
 source ./env_common.sh
 
+# standalone = one server on this host; pd = prefill/decode split behind
+# 22_launch_router.sh; agg = N independent standalone servers behind
+# 23_launch_agg_router.sh (the matched-capacity baseline).
 MODE="${MODE:-standalone}"
 # Under PD the default endpoint MUST be the router, not $PORT. Benching
 # localhost:30000 in PD mode hits the PREFILL worker directly, which answers a
 # completion request with a body that has no "choices" key, and bench_serving
 # reports that as `Warmup failed ... KeyError: 'choices'` -- an error that says
 # nothing about the actual mistake. Pass ENDPOINT= explicitly to override.
-if [[ "$MODE" == "pd" ]]; then
-    ENDPOINT="${ENDPOINT:-localhost:$ROUTER_PORT}"
-else
-    ENDPOINT="${ENDPOINT:-localhost:$PORT}"
-fi
+# `agg` is the same story for a different reason: hitting one worker directly
+# would measure one machine and label it N.
+case "$MODE" in
+    pd|agg) ENDPOINT="${ENDPOINT:-localhost:$ROUTER_PORT}" ;;
+    *)      ENDPOINT="${ENDPOINT:-localhost:$PORT}" ;;
+esac
 HOST="${ENDPOINT%%:*}"
 BPORT="${ENDPOINT##*:}"
-ISL="${ISL:-1024}"
-OSL="${OSL:-1024}"
-NUM_PROMPTS="${NUM_PROMPTS:-64}"
+# WL (env_common.sh) names a shape; unset keeps the historical 1k/1k defaults so
+# no published filename changes meaning. NUM_PROMPTS scales with concurrency only
+# under a WL preset, for the same reason 92_sweep.sh scales it: a high-concurrency
+# point at a fixed request count spends its wall clock ramping and draining. The
+# WL_PPC=2 presets reproduce n=64 at c=32 exactly.
+ISL="${ISL:-${WL_ISL:-1024}}"
+OSL="${OSL:-${WL_OSL:-1024}}"
 CONCURRENCY="${CONCURRENCY:-32}"
+if [[ -n "${WL_PPC:-}" ]]; then
+    NUM_PROMPTS="${NUM_PROMPTS:-$(( CONCURRENCY * WL_PPC ))}"
+else
+    NUM_PROMPTS="${NUM_PROMPTS:-64}"
+fi
 NAME="${NAME:-kimi-k3-bench}"
 
 # Raw-log capture. TAG identifies the experiment; MODE is standalone|pd.
@@ -66,7 +81,19 @@ fi
 # NUM_PROMPTS belongs in the name too. It was missing, and a c16 run at 32
 # requests then wrote the same file as a c16 run at 64 -- two different
 # denominators, one filename, second overwrites the first.
-TAG="${TAG:-${MODE}-${PROFILE}${EPTAG}-isl${ISL}-osl${OSL}-c${CONCURRENCY}-n${NUM_PROMPTS}}"
+#
+# THE MACHINE COUNT IS THE AXIS THIS WHOLE COMPARISON TURNS ON, so it cannot be
+# the one that is missing from the name: a 2-machine agg run and a 4-machine agg
+# run are identical in every other field and would overwrite each other. Under
+# MODE=agg it is derived from AGG_IPS (one entry per INSTANCE, so a 2x2-node
+# layout would under-count -- 94_matched.sh passes MACHINES= explicitly and is
+# the only thing that builds such a layout). Empty leaves names unchanged.
+if [[ "$MODE" == "agg" && -z "${MACHINES:-}" ]]; then
+    MACHINES="$(echo $AGG_IPS | wc -w | tr -d ' ')"
+fi
+MTAG=""
+[[ -n "${MACHINES:-}" ]] && MTAG="-m${MACHINES}"
+TAG="${TAG:-${MODE}${MTAG}-${PROFILE}${EPTAG}-isl${ISL}-osl${OSL}-c${CONCURRENCY}-n${NUM_PROMPTS}}"
 mkdir -p "$RESULTS_DIR"
 LOG="$RESULTS_DIR/${TAG}.log"
 JSON="$RESULTS_DIR/${TAG}.json"
@@ -77,6 +104,7 @@ echo "log  : ${LOG}"
 {
   echo "### tag=${TAG}"
   echo "### mode=${MODE} profile=${PROFILE} endpoint=${ENDPOINT}"
+  echo "### wl=${WL:-custom} machines=${MACHINES:-unstated}"
   echo "### isl=${ISL} osl=${OSL} num_prompts=${NUM_PROMPTS} concurrency=${CONCURRENCY}"
   # Recorded even when EP is off, so a log can never be ambiguous about which
   # MoE path produced it. "unknown" means the container was not reachable from

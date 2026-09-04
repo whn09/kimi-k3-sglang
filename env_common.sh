@@ -75,7 +75,16 @@ DRAFT_MODEL_PATH="${DRAFT_MODEL_PATH:-/models/Kimi-K3-DSpark}"
 # that indistinguishable from a good run, so a stale image now fails to be found
 # instead. require_efa_image() re-checks the patches at launch for the same
 # reason.
-IMAGE="${IMAGE:-kimi-k3-efa-v2:latest}"
+# THE DEFAULT IS THE nccl2312 TAG, NOT :latest, AND THAT IS NOT COSMETIC. The
+# `:latest` image on all four B300s is the earlier build carrying NCCL 2.30.7,
+# and GIN type 5 cannot initialise on it at all: the plugin loads, is assigned,
+# and then device-comm setup says "Cannot get backend version for invalid GIN
+# type 5". It cannot be fixed at runtime either (DeepEP asserts an exact
+# compile/runtime NCCL match below 2.31), so on `:latest` every cross-node EP arm
+# fails to boot and every single-node arm quietly measures NVLink. A fresh
+# `docker build` from this Dockerfile pins nvidia-nccl-cu13 2.31.2 before the
+# DeepEP stage, so tag such a build nccl2312 too rather than moving :latest.
+IMAGE="${IMAGE:-kimi-k3-efa-v2:nccl2312}"
 
 # ---- serving profile ----
 # The SGLang cookbook page for this model
@@ -152,6 +161,40 @@ esac
 TP_SIZE="${TP_SIZE:-8}"
 SERVED_MODEL_NAME="${SERVED_MODEL_NAME:-moonshotai/Kimi-K3}"
 PORT="${PORT:-30000}"
+
+# ---- workload presets ----
+# THREE named shapes, because "is PD better than N single nodes" has three
+# different answers and only one of them is the headline.
+#
+#   mixed    isl 8192 / osl 1024  the documented operating point. Both sides work,
+#                                 so this is the arm that decides the claim.
+#   prefill  isl 8192 / osl    1  stresses the PREFILL side alone. Output-token
+#                                 throughput is meaningless here (1 token per
+#                                 request, so TPOT/ITL are undefined); read INPUT
+#                                 tok/s and TTFT. Pair it with a prefill-heavy
+#                                 ratio (3P1D), or the single decode node is not
+#                                 the thing under test but is still in the path.
+#   decode   isl  128 / osl 1024  stresses the DECODE side alone. Read OUTPUT
+#                                 tok/s and TPOT; input tok/s is 8% of mixed by
+#                                 construction. Pair it with 1P3D.
+#
+# WL is unset by default so `bash 91_bench.sh` keeps its historical 1k/1k
+# defaults and no already-published filename changes meaning. Everything the
+# matched-capacity campaign runs passes WL explicitly.
+#
+# WL_PPC = prompts per unit of concurrency, i.e. how many rounds of requests each
+# client slot issues. Requests must scale with concurrency or a high-concurrency
+# point spends most of its wall clock ramping up and draining (see 92_sweep.sh).
+# 2 reproduces the published n=64 at c=32 exactly; the prefill shape needs more
+# because each request is over in one chunk.
+WL="${WL:-}"
+case "$WL" in
+    ""|custom) ;;
+    mixed)   WL_ISL=8192; WL_OSL=1024; WL_PPC=2 ;;
+    prefill) WL_ISL=8192; WL_OSL=1;    WL_PPC=4 ;;
+    decode)  WL_ISL=128;  WL_OSL=1024; WL_PPC=2 ;;
+    *) echo "unknown WL '$WL' (mixed|prefill|decode|custom)" >&2; exit 1 ;;
+esac
 
 # ---- DeepEP v2 expert parallelism ----
 # K3's MoE on `--moe-a2a-backend deepep_v2` + `--moe-runner-backend deep_gemm`.
@@ -425,6 +468,21 @@ B300_2_IP="${B300_2_IP:-172.31.28.101}"  # B300-2 / i-0b5b67d579231b60b (2026-09
 B300_3_IP="${B300_3_IP:-172.31.30.41}"   # B300-3 / i-0f58d1d2ed885a1d4 (2026-09-04 CB)
 B300_4_IP="${B300_4_IP:-172.31.21.43}"   # B300-4 / i-0f5aef3e6a9f5f43e (2026-09-04 CB)
 
+# The drivers speak in ssh ALIASES (B300-1) because that is the only handle the
+# laptop has on a host; the launchers and both routers need IPs. One mapping, so
+# that refreshing addresses after an instance restart is one edit and cannot
+# leave a router pointed at the previous pair.
+ip_of_host() {
+    case "$1" in
+        B300-1) echo "$B300_1_IP" ;;
+        B300-2) echo "$B300_2_IP" ;;
+        B300-3) echo "$B300_3_IP" ;;
+        B300-4) echo "$B300_4_IP" ;;
+        *) echo "ERROR: no IP known for host alias '$1' -- add it to ip_of_host()" >&2
+           return 1 ;;
+    esac
+}
+
 # PD disaggregation.
 #
 # PREFILL_IPS / DECODE_IPS are space-separated LISTS -- one entry per node on that
@@ -445,6 +503,20 @@ DECODE_IPS="${DECODE_IPS:-$DECODE_IP}"
 # collision, and a per-node port would have to be threaded into 20_/21_ too.
 BOOTSTRAP_PORT="${BOOTSTRAP_PORT:-8998}"
 ROUTER_PORT="${ROUTER_PORT:-8080}"
+
+# AGGREGATED BASELINE: N INDEPENDENT single-node servers behind a PLAIN router
+# (23_launch_agg_router.sh). This is the arm PD has to beat, and it has to be
+# measured through a router too -- otherwise the PD rows carry a router hop and
+# the baseline rows do not, and the comparison silently includes that difference.
+# One entry per independent instance, and for a multi-node instance it is the
+# RANK-0 address (only rank 0 serves HTTP).
+AGG_IPS="${AGG_IPS:-$B300_1_IP}"
+# Empty = each router's own default (cache_aware). The campaign pins both routers
+# to the same value so a routing policy can never be the reason one arm won; a
+# round_robin split is also exactly what "N independent servers" means, and with
+# --random-range-ratio 1.0 every request is the same size, so it is optimal here
+# rather than merely fair. Unset by default so ad-hoc launches are unchanged.
+ROUTER_POLICY="${ROUTER_POLICY:-}"
 
 # ---- multi-node instances (one sglang instance spanning >1 host) ----
 # ORTHOGONAL TO PD. PREFILL_IPS/DECODE_IPS above scale the NUMBER of independent
@@ -520,6 +592,50 @@ fi
 if (( NNODES > 1 )) && [[ "${STANDALONE_CUSTOM_AR:-off}" == "on" ]]; then
     echo "NNODES=$NNODES: custom all-reduce off (it is an intra-node P2P path)" >&2
     STANDALONE_CUSTOM_AR=off
+fi
+
+# TP=16 CHANGES THE MEMORY ARITHMETIC AND THE PROFILE TABLE DOES NOT KNOW IT.
+# Weights halve per GPU, so the KV pool grows to fill mem-fraction and there is
+# less left for the graph pool + ElasticBuffer: at 0.85 a 2-node decode instance
+# dies in capture (KV 50.61 GB/GPU, 2.62 GiB free), and 0.78 boots (KV 41.07 GB,
+# 1 594 944 tokens). Both sides of the published 1421.72 tok/s 4-machine arm ran
+# 0.78, so clamping here is what makes that arm reproducible from the arm name
+# alone. An explicit MEM_FRACTION= from the caller still wins, because every
+# launcher prefers it over these profile values.
+MULTINODE_MEM_FRACTION="${MULTINODE_MEM_FRACTION:-0.78}"
+if (( NNODES > 1 )); then
+    for _v in STANDALONE_MEM_FRACTION PREFILL_MEM_FRACTION DECODE_MEM_FRACTION; do
+        if awk "BEGIN{exit !(${!_v} > $MULTINODE_MEM_FRACTION)}"; then
+            echo "NNODES=$NNODES: $_v ${!_v} -> $MULTINODE_MEM_FRACTION (TP=$TP_SIZE has a bigger KV pool)" >&2
+            eval "$_v=$MULTINODE_MEM_FRACTION"
+        fi
+    done
+    unset _v
+fi
+
+# GIN TYPE 5 NEEDS A CROSS-NODE INSTANCE; A SINGLE-NODE `direct` INSTANCE NEEDS 3.
+# Settled 2026-09-04 on a clean same-host contrast: a 1-node ep=8 direct decode
+# instance dies at _C.ElasticBuffer(...) with
+#     nccl.cu:188): 3 (GIN: DevComm setup failed on all available backends)
+# surfaced by sglang as `Capture cuda graph failed:` plus its generic OOM advice,
+# while the SAME host inside a 2-node hybrid instance builds its ElasticBuffer on
+# type 5 without complaint. detect_gin() correctly prefers 5 on an EFA box, and
+# that preference is right for every cross-node arm and wrong for every
+# single-node one -- so without this rule `bash 10_launch_standalone.sh` with the
+# stock ep=8 default does not boot on this image, and every ep=8 PD arm has to be
+# hand-patched at launch (it was, twice).
+# It costs nothing: a `direct` instance keeps its whole a2a on NVLink, so the GIN
+# backend only has to initialise, never carry traffic.
+# The -d guard keeps this host-side: the laptop-side drivers source this file too,
+# and there detect_gin() has no device list to read and would print its "no EFA or
+# IB device" warning on every invocation. The launchers run on the host, which is
+# where the rule has to apply anyway.
+if [[ -z "${GIN_TYPE:-}" && "$MOE_A2A_BACKEND" != "none" \
+      && "$DEEPEP_V2_MODE" == "direct" && -d /sys/class/infiniband ]] && (( NNODES == 1 )); then
+    if [[ "$(detect_gin)" == "5" ]]; then
+        echo "single-node deepep_v2 mode=direct: GIN type 5 -> 3 (type 5 needs >1 node)" >&2
+        GIN_TYPE=3
+    fi
 fi
 
 # ---- runtime env applied inside the container ----

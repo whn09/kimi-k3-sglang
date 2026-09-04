@@ -30,8 +30,16 @@ for ip in $DECODE_IPS; do
     ROUTE_ARGS+=(--decode "http://${ip}:${PORT}")
 done
 
+# ROUTER_POLICY applies to both sides (--policy; --prefill-policy/--decode-policy
+# exist if they ever need to differ). Empty = the router's own default,
+# cache_aware, which is what every published PD row here used. The
+# matched-capacity campaign pins it so that the PD arm and the aggregated
+# baseline cannot differ on routing policy -- see AGG_IPS in env_common.sh.
+POLICY_ARGS=()
+[[ -n "${ROUTER_POLICY:-}" ]] && POLICY_ARGS=(--policy "$ROUTER_POLICY")
+
 np=$(echo $PREFILL_IPS | wc -w); nd=$(echo $DECODE_IPS | wc -w)
-echo "router  : 0.0.0.0:${ROUTER_PORT}   (${np}P${nd}D)"
+echo "router  : 0.0.0.0:${ROUTER_PORT}   (${np}P${nd}D)  policy=${ROUTER_POLICY:-<default cache_aware>}"
 for ip in $PREFILL_IPS; do echo "prefill : http://${ip}:${PORT} (bootstrap ${BOOTSTRAP_PORT})"; done
 for ip in $DECODE_IPS;  do echo "decode  : http://${ip}:${PORT}"; done
 
@@ -58,6 +66,7 @@ docker run -d --name "$NAME" \
     -m sglang_router.launch_router \
     --pd-disaggregation \
     "${ROUTE_ARGS[@]}" \
+    ${POLICY_ARGS[@]+"${POLICY_ARGS[@]}"} \
     --host 0.0.0.0 \
     --port "${ROUTER_PORT}"
 
