@@ -4,6 +4,13 @@
 #   bash 10_launch_standalone.sh            # with DSPARK spec decoding
 #   NO_SPEC=1 bash 10_launch_standalone.sh  # base model only (first bring-up)
 #
+# Cross-node EP, one instance over two hosts (TP=16, ep=16, hybrid) -- this is the
+# cheapest way to exercise the EFA/GIN expert-parallel path, because the default
+# TP=8 keeps the whole a2a on NVLink. Same command on both hosts but NODE_RANK,
+# and DIST_INIT_ADDR is rank 0's IP on both. Only rank 0 binds :$PORT.
+#   B300-1: NNODES=2 NODE_RANK=0 TP_SIZE=16 DIST_INIT_ADDR=$B300_1_IP bash 10_launch_standalone.sh
+#   B300-2: NNODES=2 NODE_RANK=1 TP_SIZE=16 DIST_INIT_ADDR=$B300_1_IP bash 10_launch_standalone.sh
+#
 # Follow with: docker logs -f kimi-k3
 set -euo pipefail
 
@@ -62,12 +69,18 @@ docker run -d --name "$NAME" \
     -e CGMAXBS="${CGMAXBS:-}" \
     ${DEEPEP_ENVS[@]+"${DEEPEP_ENVS[@]}"} \
     -e TP_SIZE="$TP_SIZE" \
+    -e NNODES="$NNODES" -e NODE_RANK="$NODE_RANK" \
+    -e DIST_INIT_ADDR="$DIST_INIT_ADDR" -e DIST_INIT_PORT="$DIST_INIT_PORT" \
     -e PORT="$PORT" \
     --entrypoint bash \
     "$IMAGE" \
     /host/kimi-k3-sglang/start_standalone.sh
 
-echo "launched '$NAME' (profile=$PROFILE, dcp=$STANDALONE_DCP_SIZE, mamba=$STANDALONE_MAMBA_RATIO, mem=$STANDALONE_MEM_FRACTION)  ->  docker logs -f $NAME"
+echo "launched '$NAME' (profile=$PROFILE, dcp=$STANDALONE_DCP_SIZE, mamba=$STANDALONE_MAMBA_RATIO, mem=${MEM_FRACTION:-$STANDALONE_MEM_FRACTION})  ->  docker logs -f $NAME"
 # CAP is an env var, not a flag, so it is invisible in `docker inspect .Args`.
-echo "  a2a=$MOE_A2A_BACKEND ep=$EP_SIZE cap=${CAP:-$STANDALONE_CAP} chunk=${CHUNK:-$STANDALONE_CHUNK}"
+echo "  a2a=$MOE_A2A_BACKEND ep=$EP_SIZE mode=$DEEPEP_V2_MODE cap=${CAP:-$STANDALONE_CAP} chunk=${CHUNK:-$STANDALONE_CHUNK}"
+if (( NNODES > 1 )); then
+    echo "  tp=$TP_SIZE over $NNODES nodes, this host is node-rank $NODE_RANK, rendezvous ${DIST_INIT_ADDR}:${DIST_INIT_PORT}"
+    echo "  (rank != 0 never binds :$PORT -- do not wait for 'server is fired up' there)"
+fi
 echo "health: curl -s localhost:${PORT}/health_generate"

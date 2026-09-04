@@ -203,6 +203,47 @@ RUN TORCH_LIB=$(python3 -c "import torch, os; print(os.path.dirname(torch.__file
     ldconfig && \
     echo "registered torch lib dir with ldconfig: $TORCH_LIB"
 
+# ---- NCCL >= 2.31, and it MUST be in place before DeepEP is compiled ----
+# This is what makes `NCCL_GIN_TYPE=5` (EFA-GDA, GPU-initiated) usable at all.
+# The base image's pip NCCL is 2.30.7, and with it the GIN plugin loads and is
+# even *assigned*:
+#     GIN/Plugin: Loaded gin plugin Libfabric_GDAKI (v14)
+#     GIN/Plugin: Assigned plugin Libfabric_GDAKI type 5 to comm
+# and then device-comm setup rejects it:
+#     gin/gin_host.cc:247 (ncclGinDevCommSetup) NCCL WARN
+#       Cannot get backend version for invalid GIN type 5
+#     RuntimeError: NCCL exception (csrc/kernels/backend/nccl.cu:188): 3
+# i.e. 2.30.7's host side has no type-5 backend-version entry, so type 5 is only
+# reachable from 2.31+. (Type 3 / GDAKI works on 2.30.7, which is why the CPU-proxy
+# path was all we had. It is the slow path -- see reference_efa_gda_mechanism.)
+#
+# It has to be here, BEFORE the DeepEP build below, and not at runtime. Prior to
+# 2.31 DeepEP requires an EXACT compile-time/runtime NCCL match and asserts on it:
+#     Assertion (csrc/kernels/backend/nccl.cu:184):
+#       NCCL_VERSION_CODE == nccl_runtime_version and "Prior to NCCL 2.31, NCCL
+#       compile-time and runtime versions must be the same. Please re-compile DeepEP."
+# so `pip install nvidia-nccl-cu13==2.31.2` inside a running container turns one
+# failure into another (measured, 2026-09-04), and EP_SUPPRESS_NCCL_CHECK=1 does
+# NOT suppress that assert -- it only covers the check_nccl_so() byte-compare.
+# Compiling against 2.31.2 satisfies the assert's own precondition and lifts the
+# strict-match requirement for good.
+#
+# --no-deps: this is a leaf CUDA runtime wheel and resolving its deps would let
+# pip walk into torch's pin and downgrade it back. Same version the EFA
+# microbenchmark kit pins (ep-benchmarks-efa/deepep-v2-efa-official/Dockerfile),
+# so a K3 GIN-5 number and a test_ep.py GIN-5 number share an NCCL.
+ARG NCCL_PIP_VER=2.31.2
+RUN set -eu; \
+    pip install --no-cache-dir --no-deps --upgrade "nvidia-nccl-cu13==${NCCL_PIP_VER}"; \
+    ldconfig; \
+    NCCL_LIB="$(python3 -c 'import nvidia.nccl, os; print(os.path.join(list(nvidia.nccl.__path__)[0], "lib"))')"; \
+    test -e "$NCCL_LIB/libnccl.so.2" || { echo "FATAL: no libnccl.so.2 under $NCCL_LIB"; exit 1; }; \
+    v=$(python3 -c "import importlib.metadata as m; print(m.version('nvidia-nccl-cu13'))"); \
+    echo "pip NCCL: $v -> $NCCL_LIB"; \
+    python3 -c "import sys; v=tuple(int(x) for x in '$v'.split('.')[:2]); sys.exit(0 if v >= (2,31) else 1)" \
+      || { echo "FATAL: pip NCCL is $v; GIN type 5 needs >= 2.31 on the host side,"; \
+           echo "       and < 2.31 also makes DeepEP demand an exact compile/runtime match."; exit 1; }
+
 # ---- DeepEP v2 from amazon-contributing, replacing the bundled sgl-deep-ep ----
 # The base image ships `sgl-deep-ep 0.1.2`, which owns the `deep_ep/` package and
 # is DeepEP __version__ 2.1.0. We replace it with amazon-contributing/DeepEP,
@@ -445,6 +486,10 @@ RUN set -eu; \
            echo "       was not fully removed, so this package dir has two provenances."; exit 1; }; \
     test -f /opt/DeepEP/BUILD_REF \
       || { echo "FATAL: /opt/DeepEP/BUILD_REF missing -- DeepEP was not built from source."; exit 1; }; \
-    echo "deepep_v2 preflight OK: amazon-contributing/DeepEP $(cat /opt/DeepEP/BUILD_REF) arch ${K3_DEEPEP_ARCH}"
+    NV=$(python3 -c "import importlib.metadata as m; print(m.version('nvidia-nccl-cu13'))"); \
+    python3 -c "import sys; v=tuple(int(x) for x in '$NV'.split('.')[:2]); sys.exit(0 if v >= (2,31) else 1)" \
+      || { echo "FATAL: a later layer downgraded pip NCCL to $NV; GIN type 5 needs >= 2.31,"; \
+           echo "       and DeepEP was compiled against the version asserted earlier."; exit 1; }; \
+    echo "deepep_v2 preflight OK: amazon-contributing/DeepEP $(cat /opt/DeepEP/BUILD_REF) arch ${K3_DEEPEP_ARCH} nccl ${NV} (GIN type 5 capable)"
 
 WORKDIR /workspace

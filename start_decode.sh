@@ -15,6 +15,10 @@ set -euo pipefail
 source /host/kimi-k3-sglang/env_common.sh
 setup_runtime_env
 
+# Empty at NNODES=1. Fails fast (rather than hanging for --dist-timeout) when the
+# rendezvous address is missing or TP does not divide over the nodes.
+build_multinode_args
+
 SPEC_ARGS=()
 if [[ "${NO_SPEC:-0}" != "1" ]]; then
     SPEC_ARGS=(
@@ -148,7 +152,8 @@ if [[ "${MOE_A2A_BACKEND:-none}" != "none" ]]; then
     fi
 fi
 
-echo "=== Kimi-K3 DECODE: TP=${TP_SIZE} ep=${EP_SIZE:-1} a2a=${MOE_A2A_BACKEND:-none}" \
+echo "=== Kimi-K3 DECODE: TP=${TP_SIZE} ep=${EP_SIZE:-1} mode=${DEEPEP_V2_MODE:-direct}" \
+     "nodes=${NNODES}/rank${NODE_RANK} a2a=${MOE_A2A_BACKEND:-none}" \
      "cap=${SGLANG_DEEPEP_V2_NUM_MAX_DISPATCH_TOKENS_PER_RANK:-n/a}" \
      "gin=${NCCL_GIN_TYPE:-unset} graphs=ON max-bs=${CGMAXBS:-<sglang default>}" \
      "max-run=${MAXRUN:-<DSPARK 48>} dcp=${DCP_SIZE:-8} mem=${MEM_FRACTION:-0.85} ==="
@@ -174,6 +179,7 @@ exec python3 -m sglang.launch_server \
     "${EP_ARGS[@]}" \
     "${CG_ARGS[@]}" \
     "${RUN_ARGS[@]}" \
+    ${MULTINODE_ARGS[@]+"${MULTINODE_ARGS[@]}"} \
     --host 0.0.0.0 \
     --port "$PORT" \
     --decode-log-interval 1 \

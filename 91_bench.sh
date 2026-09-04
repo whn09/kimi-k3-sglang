@@ -43,13 +43,25 @@ RESULTS_DIR="${RESULTS_DIR:-$SCRIPT_DIR_HOST/results}"
 # this harness can see it.
 #
 # The stamp is empty when EP is off, so existing plain-TP filenames are unchanged.
+#
+# The EP SIZE and the NODE COUNT belong in the name for the same reason, and they
+# are read from the CONTAINER, not from this shell: a 2-node ep=16 run and a
+# 1-node ep=8 run at the same profile/ISL/OSL/c/n otherwise write the same file
+# and the second deletes the first -- and `bash 91_bench.sh` without the launch's
+# TP_SIZE= would label the ep=16 server "ep8".
 EPTAG=""
 if [[ "${MOE_A2A_BACKEND:-none}" != "none" ]]; then
     if [[ "$MODE" == "pd" ]]; then
+        SRV=kimi-k3-prefill
         EPTAG="-${MOE_A2A_BACKEND}-p$(read_cap kimi-k3-prefill "${CAP_PREFILL:-}")d$(read_cap kimi-k3-decode "${CAP_DECODE:-}")"
     else
+        SRV=kimi-k3
         EPTAG="-${MOE_A2A_BACKEND}-cap$(read_cap kimi-k3)"
     fi
+    RUN_EP="$(read_cenv "$SRV" EP_SIZE "${EP_SIZE:-}")"
+    RUN_NN="$(read_cenv "$SRV" NNODES "${NNODES:-1}")"
+    RUN_MODE="$(read_cenv "$SRV" DEEPEP_V2_MODE "${DEEPEP_V2_MODE:-}")"
+    EPTAG="-ep${RUN_EP}x${RUN_NN}node${EPTAG}"
 fi
 # NUM_PROMPTS belongs in the name too. It was missing, and a c16 run at 32
 # requests then wrote the same file as a c16 run at 64 -- two different
@@ -70,9 +82,9 @@ echo "log  : ${LOG}"
   # MoE path produced it. "unknown" means the container was not reachable from
   # here (e.g. benching a remote endpoint) -- treat such a row as unlabelled.
   if [[ "$MODE" == "pd" ]]; then
-      echo "### a2a=${MOE_A2A_BACKEND} ep=${EP_SIZE} cap_prefill=$(read_cap_src kimi-k3-prefill "${CAP_PREFILL:-}") cap_decode=$(read_cap_src kimi-k3-decode "${CAP_DECODE:-}")"
+      echo "### a2a=${MOE_A2A_BACKEND} ep=${RUN_EP:-$EP_SIZE} mode=${RUN_MODE:-$DEEPEP_V2_MODE} nnodes=${RUN_NN:-$NNODES} cap_prefill=$(read_cap_src kimi-k3-prefill "${CAP_PREFILL:-}") cap_decode=$(read_cap_src kimi-k3-decode "${CAP_DECODE:-}")"
   else
-      echo "### a2a=${MOE_A2A_BACKEND} ep=${EP_SIZE} cap=$(read_cap kimi-k3)"
+      echo "### a2a=${MOE_A2A_BACKEND} ep=${RUN_EP:-$EP_SIZE} mode=${RUN_MODE:-$DEEPEP_V2_MODE} nnodes=${RUN_NN:-$NNODES} cap=$(read_cap kimi-k3)"
   fi
   echo "### started=$(date -u +%FT%TZ)"
 } > "$LOG"

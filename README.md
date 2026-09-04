@@ -199,10 +199,16 @@ older `deepep-v2-20260902-07c8f729` predates them. See the tag table
 
 ### DeepEP v2
 
-K3's MoE runs on `--moe-a2a-backend deepep_v2` + `--moe-runner-backend deep_gemm`,
-with **EP inside one node** (`ep_size == tp_size == 8`, `--deepep-v2-mode direct`).
-In a PD run the only thing crossing the wire is the Mooncake KV transfer;
-cross-node EP is out of scope for these scripts. The image bakes in five source
+K3's MoE runs on `--moe-a2a-backend deepep_v2` + `--moe-runner-backend deep_gemm`.
+**The default is EP inside one node** (`ep_size == tp_size == 8`,
+`--deepep-v2-mode direct`), and it is important to be clear about what that
+default does and does not measure: `direct` is the intra-node path and 8 ranks fit
+in one box, so the a2a is real but it is **NVLink** a2a — EFA, GIN and the network
+are not involved, and in a PD run the only thing crossing the wire is the Mooncake
+KV transfer. For a cross-node EP measurement set `NNODES`/`TP_SIZE` (see
+[Cross-node EP](#cross-node-ep-ep16-over-two-nodes) below); `direct` is then
+upgraded to `hybrid` automatically, because `direct` cannot reach another node.
+The image bakes in five source
 patches without which v2 either refuses K3 by name or — worse, in the case of
 `kimi_k3.py` — **serves wrong numerics silently**, so `require_efa_image` refuses
 to launch on an image that cannot prove they are present. Root cause per patch is
@@ -254,28 +260,115 @@ Two things to know before changing these:
 `MOE_A2A_BACKEND=none` restores the old plain-TP `flashinfer_mxfp4` path as a
 baseline, and puts the chunk back to 16384 so the comparison is not rigged.
 
-Which NCCL GIN backend DeepEP v2 uses is auto-detected (`detect_gin`), because
-DeepEP aborts on a `NONE` gin type even for a single-node `direct` run:
-type **3** (GDAKI) plus a one-plane `NCCL_IB_HCA` pin whenever an IB device
-exists, type **5** (EFA_GDA) only on a box that has no IB device at all.
+#### GIN backend: type 5 (EFA-GDA), and the three things it needs at once
 
-**Prefer 3 even on a box full of EFA rails.** p6-b300 has 18 HCAs (16 EFA
-`rdmap*` + 2 ConnectX-7 `ibp*`, all `PORT_ACTIVE`), and type 5 there initializes,
-loads all 214 GB of weights, and then dies at **decode CUDA graph capture**:
+Which NCCL GIN backend DeepEP v2 uses is auto-detected (`detect_gin`), because
+DeepEP aborts on a `NONE` gin type even for a single-node `direct` run. On any box
+with EFA rails the answer is type **5** (EFA-GDA); type **3** (GDAKI) is for a box
+that has no EFA device at all.
+
+**On p6-b300, type 5 is not a preference — it is the only backend that can go
+cross-node at all.** Measured 2026-09-04, both arms on the same pair (B300-1 +
+B300-2), same image, DeepEP's own `test_ep.py` at EP 16 / 8192 tokens / 24 SM:
+
+| `NCCL_GIN_TYPE` | result |
+|---|---|
+| **5** (EFA-GDA) | **rc=0.** dispatch 901.5 µs / 136 GB/s (SO), combine 1682 µs / 140 GB/s |
+| 3 (GDAKI) | **fails to initialise.** `GIN: DevComm setup failed with backend type 3` → `gin/gin_host.cc:440 NCCL WARN GIN: DevComm setup failed on all available backends` → `NCCL exception (nccl.cu:188): 3` |
+
+Type 3 wants a GDAKI-capable device and this box's EFA rails are not one
+(`NET/OFI Selected provider is efa, fabric is efa-direct (found 16 nics)`), so
+device-comm setup finds nothing to build on. It only ever worked here because
+`--deepep-v2-mode direct` never leaves the node. Type 5 also routes differently:
+type 3 puts every scale-out byte through a CPU proxy thread, while type 5 has the
+GPU write the WQE and ring the doorbell itself.
+
+It needs **three things together**, and omitting any one of them looks like a
+different bug — which is exactly how this repo got it wrong for a while, on the
+strength of a test that had only the first:
+
+1. **NCCL ≥ 2.31, which is an image property, not a knob.** With the base image's
+   2.30.7 the plugin loads and is even assigned, then device-comm setup rejects
+   it:
+   ```
+   GIN/Plugin: Loaded gin plugin Libfabric_GDAKI (v14)
+   GIN/Plugin: Assigned plugin Libfabric_GDAKI type 5 to comm
+   gin/gin_host.cc:247 (ncclGinDevCommSetup) NCCL WARN
+     Cannot get backend version for invalid GIN type 5
+   RuntimeError: NCCL exception (csrc/kernels/backend/nccl.cu:188): 3
+   ```
+   **You cannot fix this from inside a running container.** Prior to 2.31 DeepEP
+   demands an exact compile/runtime NCCL match and asserts on it, so a
+   `pip install nvidia-nccl-cu13==2.31.2` in the container just trades one error
+   for `nccl.cu:184` ("Please re-compile DeepEP"), and `EP_SUPPRESS_NCCL_CHECK=1`
+   does not cover that assert. The Dockerfile therefore pins
+   `nvidia-nccl-cu13 2.31.2` **before** the DeepEP build stage, and the build
+   fails if the resolved version is < 2.31.
+2. **`NCCL_SYM_GIN_KERNELS_ENABLE=0`, always paired with `NCCL_GIN_TYPE=5`.**
+   NCCL's symmetric-memory GIN kernels need strong signals, which the libfabric
+   GIN plugin does not implement. Both or neither.
+3. **`NCCL_IB_HCA=rdmap` on a mixed device list.** p6-b300 shows 16 `rdmap*` EFA
+   + 2 `ibp*` ConnectX-7; without the prefix pin NCCL builds only 2 GIN GDAKI NICs
+   off the `ibp*` pair and a rank dies at `nccl.cu:185`. `rdmap` is a **prefix**,
+   so one word covers all 16 rails. On a pure-`rdmap` box (p5en) `pick_efa_hca`
+   sets nothing, because there the pin is only a chance to get the prefix wrong.
+
+`build_deepep_envs` emits all three. Verify from the log rather than assuming — a
+wrong type is a performance bug, not an error. With
+`NCCL_DEBUG=INFO NCCL_DEBUG_SUBSYS=INIT,NET,GIN` the lines that prove it are:
+
+```
+NCCL version 2.31.2+cuda13.3
+NCCL_GIN_TYPE set by environment to 5.
+GIN/Plugin: Skipping plugin Libfabric index 3 type 2: NCCL_GIN_TYPE=5 requested
+GIN/Plugin: Loaded gin plugin Libfabric_GDAKI (v14)
+```
+
+The middle line is the one to look for: type 2 is the CPU-proxy plugin, and
+"Skipping" it is what says the GPU-initiated path won.
+
+**One residual, stated honestly.** The 2026-09-03 type-5 attempt on this box died
+at **decode CUDA graph capture** with
 
 ```
 RuntimeError: NCCL exception (csrc/kernels/backend/nccl.cu:108): 5
   (GIN strong signals are required, but the GIN plugin does not support them.)
 ```
 
-The masked-decode kernel needs GIN strong signals; EFA_GDA does not implement
-them and GDAKI does. sglang wraps that as "Capture cuda graph failed" and appends
-its generic OOM "Possible solutions" list — **all irrelevant**, so do not go
-chasing memory. Type 3 on the same box comes up serving in ~6 min. The same error
-at `nccl.cu:188` instead, i.e. at `ElasticBuffer` construction rather than graph
-capture, means the container is missing `--device=/dev/infiniband` or
-`NCCL_GIN_TYPE` entirely. `NCCL_DEBUG_SUBSYS=GIN` prints which backend was
-selected.
+That run had neither (1) nor (2). If it still fires with all three in place, the
+escape hatches in order are `GIN_TYPE=3` **on the decode side only** (pass it to
+`21_launch_decode.sh`, since `build_deepep_envs` feeds both sides) and then
+`DECODE_CUDA_GRAPH=0`. Either way do not go chasing memory: sglang wraps this as
+"Capture cuda graph failed" and appends its generic OOM "Possible solutions" list,
+all of which are irrelevant here. The same error at `nccl.cu:188` instead, i.e. at
+`ElasticBuffer` construction rather than graph capture, means the container is
+missing `--device=/dev/infiniband` or `NCCL_GIN_TYPE` entirely.
+
+#### Cross-node EP: ep=16 over two nodes
+
+`NNODES` / `NODE_RANK` / `DIST_INIT_ADDR` span one sglang instance across hosts,
+which is the only way to get EP > 8 on 8-GPU boxes. This is **orthogonal to PD**:
+`PREFILL_IPS`/`DECODE_IPS` scale the number of independent instances, these scale
+one instance. Both at once — 1P1D where each side is a 2-node TP=16 instance —
+uses all four B300s.
+
+```bash
+# cheapest arm: one unified 2-node instance, ep=16, hybrid
+ssh B300-1 'cd kimi-k3-sglang && NNODES=2 NODE_RANK=0 TP_SIZE=16     DIST_INIT_ADDR=172.31.30.164 IMAGE=kimi-k3-efa-v2:nccl2312 bash 10_launch_standalone.sh'
+ssh B300-2 'cd kimi-k3-sglang && NNODES=2 NODE_RANK=1 TP_SIZE=16     DIST_INIT_ADDR=172.31.30.164 IMAGE=kimi-k3-efa-v2:nccl2312 bash 10_launch_standalone.sh'
+```
+
+`EP_SIZE` defaults to `TP_SIZE`, so `TP_SIZE=16` is enough to get `ep=16`, and
+`DEEPEP_V2_MODE` goes `direct` → `hybrid` on its own. Three things to know:
+
+- `DIST_INIT_ADDR` is **rank 0's IP on every node**, and a wrong one does not
+  fail, it **hangs for `--dist-timeout` (7200 s)**. `build_multinode_args` refuses
+  to launch without it.
+- **Only rank 0 binds `$PORT`.** Do not wait for "server is fired up" on rank 1,
+  and give the router rank 0's address.
+- **Check the log line, not the intent.** `start_*.sh` now prints
+  `ep=… mode=… nodes=…/rank…`; a run that says `ep=8 mode=direct` measured NVLink
+  no matter what was requested.
 
 Startup takes ~11 min: ~6 min to load 1.5 TB of weights, then FlashInfer
 autotune + CUDA graph capture. **GPU utilisation reads 0% for almost all of

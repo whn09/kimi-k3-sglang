@@ -1,8 +1,15 @@
 #!/bin/bash
-# HOST-side launcher: PREFILL container. Run on P6-B300-1.
+# HOST-side launcher: PREFILL container. Run on B300-1.
 #
 #   bash 20_launch_prefill.sh
 #   NO_SPEC=1 bash 20_launch_prefill.sh
+#
+# Cross-node EP: one prefill instance spanning two hosts (TP=16, ep=16, hybrid).
+# Run this on BOTH hosts, same command except NODE_RANK, and DIST_INIT_ADDR is
+# rank 0's IP on both. Only rank 0 serves HTTP, so that is the address the router
+# gets as --prefill.
+#   B300-1: NNODES=2 NODE_RANK=0 TP_SIZE=16 DIST_INIT_ADDR=$B300_1_IP bash 20_launch_prefill.sh
+#   B300-2: NNODES=2 NODE_RANK=1 TP_SIZE=16 DIST_INIT_ADDR=$B300_1_IP bash 20_launch_prefill.sh
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -59,6 +66,8 @@ docker run -d --name "$NAME" \
     -e PREFILL_CUDA_GRAPH="${PREFILL_CUDA_GRAPH:-0}" \
     ${DEEPEP_ENVS[@]+"${DEEPEP_ENVS[@]}"} \
     -e TP_SIZE="$TP_SIZE" -e PORT="$PORT" -e BOOTSTRAP_PORT="$BOOTSTRAP_PORT" \
+    -e NNODES="$NNODES" -e NODE_RANK="$NODE_RANK" \
+    -e DIST_INIT_ADDR="$DIST_INIT_ADDR" -e DIST_INIT_PORT="$DIST_INIT_PORT" \
     --entrypoint bash \
     "$IMAGE" \
     /host/kimi-k3-sglang/start_prefill.sh
@@ -66,4 +75,8 @@ docker run -d --name "$NAME" \
 echo "launched '$NAME' (profile=$PROFILE, mem=${MEM_FRACTION:-$PREFILL_MEM_FRACTION}, dcp=${DCP_SIZE:-$PREFILL_DCP_SIZE}, mamba=${MAMBA_RATIO:-$PREFILL_MAMBA_RATIO}, backend=${TRANSFER_BACKEND:-mooncake})  ->  docker logs -f $NAME"
 # CAP is an env var, not a flag, so it is invisible in `docker inspect .Args`.
 # Print it here or a run's most important axis goes unrecorded.
-echo "  a2a=$MOE_A2A_BACKEND ep=$EP_SIZE cap=${CAP:-$PREFILL_CAP} chunk=${CHUNK:-$PREFILL_CHUNK} decode-graphs=$([ "${PREFILL_CUDA_GRAPH:-0}" = 1 ] && echo on || echo OFF)"
+echo "  a2a=$MOE_A2A_BACKEND ep=$EP_SIZE mode=$DEEPEP_V2_MODE cap=${CAP:-$PREFILL_CAP} chunk=${CHUNK:-$PREFILL_CHUNK} decode-graphs=$([ "${PREFILL_CUDA_GRAPH:-0}" = 1 ] && echo on || echo OFF)"
+if (( NNODES > 1 )); then
+    echo "  tp=$TP_SIZE over $NNODES nodes, this host is node-rank $NODE_RANK, rendezvous ${DIST_INIT_ADDR}:${DIST_INIT_PORT}"
+    echo "  (rank != 0 never binds :$PORT -- do not wait for 'server is fired up' there)"
+fi

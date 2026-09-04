@@ -1,8 +1,14 @@
 #!/bin/bash
-# HOST-side launcher: DECODE container. Run on P6-B300-2.
+# HOST-side launcher: DECODE container. Run on B300-2.
 #
 #   bash 21_launch_decode.sh
 #   NO_SPEC=1 bash 21_launch_decode.sh
+#
+# Cross-node EP: one decode instance spanning two hosts (TP=16, ep=16, hybrid).
+# Run this on BOTH hosts, same command except NODE_RANK; DIST_INIT_ADDR is rank
+# 0's IP on both, and only rank 0 serves HTTP.
+#   B300-3: NNODES=2 NODE_RANK=0 TP_SIZE=16 DIST_INIT_ADDR=$B300_3_IP bash 21_launch_decode.sh
+#   B300-4: NNODES=2 NODE_RANK=1 TP_SIZE=16 DIST_INIT_ADDR=$B300_3_IP bash 21_launch_decode.sh
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -67,10 +73,16 @@ docker run -d --name "$NAME" \
     -e SPEC_BLOCK_SIZE="${SPEC_BLOCK_SIZE:-7}" \
     ${DEEPEP_ENVS[@]+"${DEEPEP_ENVS[@]}"} \
     -e TP_SIZE="$TP_SIZE" -e PORT="$PORT" \
+    -e NNODES="$NNODES" -e NODE_RANK="$NODE_RANK" \
+    -e DIST_INIT_ADDR="$DIST_INIT_ADDR" -e DIST_INIT_PORT="$DIST_INIT_PORT" \
     --entrypoint bash \
     "$IMAGE" \
     /host/kimi-k3-sglang/start_decode.sh
 
 echo "launched '$NAME' (profile=$PROFILE, mem=${MEM_FRACTION:-$DECODE_MEM_FRACTION}, dcp=${DCP_SIZE:-$DECODE_DCP_SIZE}, mamba=${MAMBA_RATIO:-$DECODE_MAMBA_RATIO}, symm=${SYMM_MEM:-$DECODE_SYMM_MEM})  ->  docker logs -f $NAME"
 # CAP is an env var, not a flag, so it is invisible in `docker inspect .Args`.
-echo "  a2a=$MOE_A2A_BACKEND ep=$EP_SIZE cap=${CAP:-$DECODE_CAP} chunk=${CHUNK:-$DECODE_CHUNK} decode-graphs=ON max-bs=${CGMAXBS:-${DECODE_CGMAXBS:-<sglang default>}} max-run=${MAXRUN:-${DECODE_MAXRUN:-<DSPARK 48>}}"
+echo "  a2a=$MOE_A2A_BACKEND ep=$EP_SIZE mode=$DEEPEP_V2_MODE cap=${CAP:-$DECODE_CAP} chunk=${CHUNK:-$DECODE_CHUNK} decode-graphs=ON max-bs=${CGMAXBS:-${DECODE_CGMAXBS:-<sglang default>}} max-run=${MAXRUN:-${DECODE_MAXRUN:-<DSPARK 48>}}"
+if (( NNODES > 1 )); then
+    echo "  tp=$TP_SIZE over $NNODES nodes, this host is node-rank $NODE_RANK, rendezvous ${DIST_INIT_ADDR}:${DIST_INIT_PORT}"
+    echo "  (rank != 0 never binds :$PORT -- do not wait for 'server is fired up' there)"
+fi

@@ -13,6 +13,10 @@ set -euo pipefail
 source /host/kimi-k3-sglang/env_common.sh
 setup_runtime_env
 
+# Empty at NNODES=1. Fails fast (rather than hanging for --dist-timeout) when the
+# rendezvous address is missing or TP does not divide over the nodes.
+build_multinode_args
+
 SPEC_ARGS=()
 if [[ "${NO_SPEC:-0}" != "1" ]]; then
     SPEC_ARGS=(
@@ -70,7 +74,7 @@ fi
 CG_ARGS=()
 [[ -n "${CGMAXBS:-}" ]] && CG_ARGS=(--cuda-graph-max-bs-decode "$CGMAXBS")
 
-echo "=== Kimi-K3 standalone: TP=${TP_SIZE}, spec=$([[ ${NO_SPEC:-0} == 1 ]] && echo off || echo DSPARK)," \
+echo "=== Kimi-K3 standalone: TP=${TP_SIZE} nodes=${NNODES}/rank${NODE_RANK} ep=${EP_SIZE:-1} mode=${DEEPEP_V2_MODE:-direct}, spec=$([[ ${NO_SPEC:-0} == 1 ]] && echo off || echo DSPARK)," \
      "a2a=${MOE_A2A_BACKEND:-none} ep=${EP_SIZE:-1}" \
      "cap=${SGLANG_DEEPEP_V2_NUM_MAX_DISPATCH_TOKENS_PER_RANK:-n/a}" \
      "chunk=${CHUNKED_PREFILL:-1024} gin=${NCCL_GIN_TYPE:-unset} ==="
@@ -91,6 +95,7 @@ exec python3 -m sglang.launch_server \
     "${RADIX_ARGS[@]}" \
     "${AR_ARGS[@]}" \
     "${EP_ARGS[@]}" \
+    ${MULTINODE_ARGS[@]+"${MULTINODE_ARGS[@]}"} \
     "${CG_ARGS[@]}" \
     --host 0.0.0.0 \
     --port "$PORT" \

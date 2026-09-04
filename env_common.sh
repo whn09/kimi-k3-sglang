@@ -158,12 +158,17 @@ PORT="${PORT:-30000}"
 # Set MOE_A2A_BACKEND=none to get the old plain-TP flashinfer_mxfp4 path back as
 # a baseline; everything else in this block is then ignored.
 #
-# EP IS INTRA-NODE. ep_size == tp_size == 8 and `--deepep-v2-mode direct` keep
-# the a2a inside one box, so in a PD run the ONLY thing crossing the wire is the
-# Mooncake KV transfer. Cross-node EP (ep_size 16 over two nodes) needs more than
-# these scripts change and is deliberately out of scope.
+# EP DEFAULTS TO INTRA-NODE, AND THAT DEFAULT MEASURES NOTHING ABOUT EFA.
+# ep_size == tp_size == 8 with `--deepep-v2-mode direct` keeps the whole a2a on
+# NVLink, so in a PD run the only thing crossing the wire is the Mooncake KV
+# transfer. For cross-node EP set NNODES/TP_SIZE (see the multi-node block in the
+# cluster section) -- `direct` is then upgraded to `hybrid` automatically below,
+# because `direct` cannot reach another node and the failure is not obvious.
 MOE_A2A_BACKEND="${MOE_A2A_BACKEND:-deepep_v2}"
 EP_SIZE="${EP_SIZE:-$TP_SIZE}"
+# Recorded before the default is applied, so the NNODES>1 upgrade below can tell
+# "the caller asked for direct" from "nobody said anything".
+DEEPEP_V2_MODE_SET="${DEEPEP_V2_MODE+1}"
 DEEPEP_V2_MODE="${DEEPEP_V2_MODE:-direct}"
 MOE_RUNNER_BACKEND="${MOE_RUNNER_BACKEND:-deep_gemm}"
 
@@ -313,39 +318,65 @@ fi
 #                 one plane.
 #   5 = EFA_GDA   AWS EFA. Confirmed working on p5en (gen-2 EFA, 0xEFA2).
 #
-# PREFER 3 WHENEVER AN IB DEVICE EXISTS, EVEN ON A BOX FULL OF EFA RAILS.
-# Measured 2026-09-03 on p6-b300 (18 HCAs: 16 rdmap* EFA 0xEFA3 + 2 ibp*
-# ConnectX-7, both PORT_ACTIVE). Type 5 initializes, loads all 214 GB of
-# weights, and then dies at DECODE CUDA GRAPH CAPTURE:
+# PREFER 5 WHEREVER EFA RAILS EXIST. Type 3 routes every scale-out byte through
+# a CPU proxy thread; type 5 has the GPU write the WQE and ring the doorbell
+# itself (reference_efa_gda_mechanism), and on b300 the 16 EFA rails carry 100
+# GB/s per GPU while the 2 ConnectX-7 planes are a side channel. Using type 3 on
+# this box means the EFA fabric is idle.
 #
+# TYPE 5 NEEDS THREE THINGS TOGETHER, and omitting any one of them looks like a
+# different bug. This ordering used to be reversed here on the strength of a test
+# that had only the first of the three:
+#
+#  1. NCCL >= 2.31. With the base image's 2.30.7 the plugin loads and is even
+#     assigned ("Loaded gin plugin Libfabric_GDAKI (v14)", "Assigned plugin
+#     Libfabric_GDAKI type 5 to comm") and then device-comm setup rejects it:
+#         gin/gin_host.cc:247 (ncclGinDevCommSetup) NCCL WARN
+#           Cannot get backend version for invalid GIN type 5
+#         RuntimeError: NCCL exception (csrc/kernels/backend/nccl.cu:188): 3
+#     This is an IMAGE property, not a knob: prior to 2.31 DeepEP demands an
+#     exact compile/runtime NCCL match, so upgrading NCCL inside a running
+#     container just trades that error for the nccl.cu:184 assert (measured
+#     2026-09-04, and EP_SUPPRESS_NCCL_CHECK=1 does not cover it). The Dockerfile
+#     now pins nvidia-nccl-cu13 2.31.2 BEFORE the DeepEP build for this reason.
+#  2. NCCL_SYM_GIN_KERNELS_ENABLE=0, always paired with NCCL_GIN_TYPE=5.
+#     NCCL's symmetric-memory GIN kernels require strong signals, which the
+#     libfabric GIN plugin does not implement, so leaving them enabled crashes.
+#     Both or neither -- this is the pair the EFA microbenchmark kit ships
+#     (ep-benchmarks-efa/deepep-v2-efa-official/run_test_ep.sh).
+#  3. NCCL_IB_HCA=rdmap on a MIXED device list. b300 shows 16 rdmap* EFA +
+#     2 ibp* ConnectX-7; without the prefix pin NCCL builds only 2 GIN GDAKI
+#     NICs off the ibp* pair and a rank dies at nccl.cu:185. The success line is
+#         NET/Libfabric_GDAKI : GPU Direct RDMA Enabled for HCA 0..7 'rdmap*'
+#     On a PURE-rdmap box (p5en) the pin is unnecessary and is not set, because
+#     there it would only be a chance to get the prefix wrong.
+#
+# RESIDUAL, be honest about it: the 2026-09-03 type-5 attempt on this box died at
+# DECODE CUDA GRAPH CAPTURE with
 #   RuntimeError: NCCL exception (csrc/kernels/backend/nccl.cu:108): 5
 #     (GIN strong signals are required, but the GIN plugin does not support them.)
 #   ... decode_cuda_graph_runner.py:491 in __init__
+# That run had none of (1) or (2). If it still fires with all three in place, the
+# escape hatches in order of preference are GIN_TYPE=3 on the DECODE side only
+# (build_deepep_envs feeds both sides, so pass it per launcher), then
+# DECODE_CUDA_GRAPH=0. Do NOT go chasing memory: sglang wraps this as "Capture
+# cuda graph failed" and appends its generic OOM "Possible solutions" list
+# (mem-fraction / cuda-graph-max-bs-decode / disable the decode graph), all of
+# which are irrelevant here.
 #
-# sglang wraps that as "Capture cuda graph failed" and appends its generic OOM
-# "Possible solutions" list (mem-fraction / cuda-graph-max-bs-decode / disable
-# the decode graph) -- ALL IRRELEVANT here, so do not go chasing memory. The
-# masked-decode kernel needs GIN strong signals; EFA_GDA does not implement them
-# and GDAKI does. Type 3 on the same box came up serving in ~6 min.
-#
-# So the old ordering (EFA first) was exactly backwards for anything that
-# captures a decode graph. A prefill-only node runs --disable-cuda-graph and
-# would survive type 5, but build_deepep_envs() feeds prefill AND decode, so
-# there is no reason to split it. NCCL_DEBUG_SUBSYS=GIN prints the backend that
-# was actually selected.
+# NCCL_DEBUG_SUBSYS=GIN prints the backend that was actually selected -- check it
+# rather than assuming, because a wrong type is a performance bug, not an error.
 detect_gin() {
     if [[ -n "${GIN_TYPE:-}" ]]; then
         echo "$GIN_TYPE"; return
     fi
     local devs=""
     [[ -d /sys/class/infiniband ]] && devs="$(ls /sys/class/infiniband 2>/dev/null)"
-    if grep -q '^ibp\|^mlx' <<<"$devs"; then
-        echo 3
-    elif grep -q '^rdmap\|^efa' <<<"$devs"; then
-        # EFA-only box (p5en and friends). Fine for prefill; if a decode graph
-        # capture dies on nccl.cu:108 there is no fallback here -- the box has no
-        # IB device -- so the answer is --disable-cuda-graph or a2a=none.
+    if grep -q '^rdmap\|^efa' <<<"$devs"; then
         echo 5
+    elif grep -q '^ibp\|^mlx' <<<"$devs"; then
+        # IB-only box (the old B300-KR pair). GDAKI is the only backend there.
+        echo 3
     else
         # No RDMA device visible at all. DeepEP v2 will abort on the GIN assert,
         # so say why now instead of letting it look like a v2 bug. Note the host
@@ -370,6 +401,19 @@ pick_ib_hca() {
     echo ibp198s0f0   # p6-b300's first plane; also the "nothing found" fallback
 }
 IB_HCA="${IB_HCA:-$(pick_ib_hca)}"
+
+# For GIN type 5: the NCCL_IB_HCA value that keeps NCCL on the EFA rails, or
+# empty if no pin is needed. Only a MIXED device list needs one -- see reason (3)
+# in the GIN block. `rdmap` is a PREFIX, not a device: NCCL matches it against
+# every device name, so all 16 rails are included with one word.
+pick_efa_hca() {
+    local devs=""
+    [[ -d /sys/class/infiniband ]] && devs="$(ls /sys/class/infiniband 2>/dev/null)"
+    grep -q '^rdmap' <<<"$devs" || return 0          # no EFA rails: nothing to pin
+    grep -qv '^rdmap' <<<"$devs" || return 0         # pure-rdmap box: pin unneeded
+    echo rdmap
+}
+EFA_HCA="${EFA_HCA-$(pick_efa_hca)}"
 
 # ---- cluster ----
 # Primary ENA interface (the other 16 enpXX are EFA-only rails).
@@ -401,6 +445,82 @@ DECODE_IPS="${DECODE_IPS:-$DECODE_IP}"
 # collision, and a per-node port would have to be threaded into 20_/21_ too.
 BOOTSTRAP_PORT="${BOOTSTRAP_PORT:-8998}"
 ROUTER_PORT="${ROUTER_PORT:-8080}"
+
+# ---- multi-node instances (one sglang instance spanning >1 host) ----
+# ORTHOGONAL TO PD. PREFILL_IPS/DECODE_IPS above scale the NUMBER of independent
+# instances; these three scale ONE instance across hosts, which is the only way to
+# get EP > 8 on 8-GPU boxes. Both can be used at once: 1P1D where each side is a
+# 2-node TP=16 instance uses all four B300s.
+#
+# WHY IT MATTERS AND WHAT WAS WRONG BEFORE. With the default TP_SIZE=8 /
+# EP_SIZE=8 / DEEPEP_V2_MODE=direct, every expert-parallel byte stays on NVLink:
+# `direct` is the intra-node path and 8 ranks fit in one box, so DeepEP v2 never
+# touches EFA, GIN, or the network at all -- the a2a is real but it is NVLink a2a.
+# The 2P2D run on 2026-09-04 was exactly this: it validated PD and the Mooncake
+# KV transfer and told us NOTHING about the EFA EP path, while the log said
+# `ep=8`. A cross-node EP measurement needs all three of
+#     NNODES=2  TP_SIZE=16  EP_SIZE=16  DEEPEP_V2_MODE=hybrid
+# and `hybrid` is the mode that lets the kernels use both NVLink and the fabric.
+#
+# NODE_RANK is PER HOST -- 0 on the host named by DIST_INIT_ADDR, then 1, 2...
+# Rank 0 is also the only node that serves HTTP, so that is the host the router
+# (or a client) talks to.
+NNODES="${NNODES:-1}"
+NODE_RANK="${NODE_RANK:-0}"
+# Deliberately unset by default, and validated rather than defaulted to B300_1_IP:
+# a silently-wrong rendezvous address does not fail, it HANGS for --dist-timeout
+# (7200 s here), which is the single most expensive way to get this wrong.
+DIST_INIT_ADDR="${DIST_INIT_ADDR:-}"
+DIST_INIT_PORT="${DIST_INIT_PORT:-29500}"
+
+# Fills MULTINODE_ARGS with the sglang flags for a multi-host instance. Empty at
+# NNODES=1, so single-node call sites are unaffected.
+build_multinode_args() {
+    MULTINODE_ARGS=()
+    if (( NNODES <= 1 )); then
+        return
+    fi
+    if [[ -z "$DIST_INIT_ADDR" ]]; then
+        echo "ERROR: NNODES=$NNODES needs DIST_INIT_ADDR=<rank-0 host IP>." >&2
+        echo "       e.g. DIST_INIT_ADDR=\$B300_1_IP" >&2
+        return 1
+    fi
+    if (( TP_SIZE % NNODES != 0 )); then
+        echo "ERROR: TP_SIZE=$TP_SIZE is not divisible by NNODES=$NNODES." >&2
+        return 1
+    fi
+    # 8 GPUs per box. A TP that is not exactly NNODES*8 leaves GPUs idle, which is
+    # legal but is never what these runs mean, so say so loudly rather than
+    # producing a quietly half-sized measurement.
+    if (( TP_SIZE != NNODES * 8 )); then
+        echo "WARN: TP_SIZE=$TP_SIZE over $NNODES nodes = $((TP_SIZE / NNODES)) GPUs/node," \
+             "not 8. $(( NNODES * 8 - TP_SIZE )) GPUs will sit idle." >&2
+    fi
+    MULTINODE_ARGS=(
+        --nnodes "$NNODES"
+        --node-rank "$NODE_RANK"
+        --dist-init-addr "${DIST_INIT_ADDR}:${DIST_INIT_PORT}"
+    )
+}
+
+# `direct` is the intra-node a2a path; on a multi-node instance it cannot reach
+# the other node's experts. Upgrade it here rather than making every caller
+# remember, but only when the caller left the default alone -- an explicit
+# DEEPEP_V2_MODE is honoured so the broken combination stays testable.
+if (( NNODES > 1 )) && [[ "$MOE_A2A_BACKEND" != "none" \
+      && "$DEEPEP_V2_MODE" == "direct" && -z "$DEEPEP_V2_MODE_SET" ]]; then
+    echo "NNODES=$NNODES: deepep_v2 mode direct -> hybrid (direct is intra-node only)" >&2
+    DEEPEP_V2_MODE=hybrid
+fi
+
+# Custom all-reduce is an NVLink/P2P path and does not span hosts. PROFILE
+# low-latency turns it on for the standalone server, which is right on one node
+# and wrong on two, so force it off here rather than making the caller notice.
+# (Every PD profile already has it off on both sides.)
+if (( NNODES > 1 )) && [[ "${STANDALONE_CUSTOM_AR:-off}" == "on" ]]; then
+    echo "NNODES=$NNODES: custom all-reduce off (it is an intra-node P2P path)" >&2
+    STANDALONE_CUSTOM_AR=off
+fi
 
 # ---- runtime env applied inside the container ----
 setup_runtime_env() {
@@ -486,13 +606,22 @@ setup_runtime_env() {
 # CAP_DECODE=). It goes into the filename bare, because a filename is a join key
 # and decorating it would split one arm across two names; the provenance is
 # recorded in the .log header instead, where read_cap_src() marks it "(asserted)".
-read_cap() {
-    local name="$1" asserted="${2:-}" v
+# One env var out of a RUNNING container's config. Everything a benchmark tag
+# needs is passed with -e and never appears in the server's `server_args=` line,
+# so this is the only honest source: reading this shell's own $EP_SIZE would label
+# a TP=16 server "ep=8" whenever 91_bench.sh is invoked without the same
+# TP_SIZE= that launched it, which is a mislabelled result, not a cosmetic bug.
+read_cenv() {
+    local name="$1" var="$2" fallback="${3:-}" v
     v=$(docker inspect -f \
         '{{range .Config.Env}}{{println .}}{{end}}' "$name" 2>/dev/null \
-        | grep '^SGLANG_DEEPEP_V2_NUM_MAX_DISPATCH_TOKENS_PER_RANK=' \
-        | head -1 | cut -d= -f2)
-    echo "${v:-${asserted:-unknown}}"
+        | grep "^${var}=" | head -1 | cut -d= -f2-)
+    echo "${v:-${fallback:-unknown}}"
+}
+
+read_cap() {
+    local name="$1" asserted="${2:-}"
+    read_cenv "$name" SGLANG_DEEPEP_V2_NUM_MAX_DISPATCH_TOKENS_PER_RANK "$asserted"
 }
 
 # Same value, annotated with where it came from. For the log header only.
@@ -623,8 +752,20 @@ build_deepep_envs() {
         -e SGLANG_DEEPEP_V2_NUM_MAX_DISPATCH_TOKENS_PER_RANK="$cap"
         -e NCCL_GIN_TYPE="$gin"
     )
-    # NCCL_IB_HCA is a one-plane pin for the IB-only box and must NOT be set on
-    # an EFA box, where it would hide 15 of the 16 rails from NCCL.
-    [[ "$gin" == "3" ]] && DEEPEP_ENVS+=(-e NCCL_IB_HCA="$IB_HCA")
-    echo "DeepEP v2: ep=$EP_SIZE mode=$DEEPEP_V2_MODE runner=$MOE_RUNNER_BACKEND cap=$cap gin=$gin" >&2
+    local hca=""
+    if [[ "$gin" == "3" ]]; then
+        # One-plane pin. The IB-only box's two planes have no path between them,
+        # so NCCL must not straddle them. Never a bare device name on EFA: that
+        # would hide 15 of the 16 rails.
+        hca="$IB_HCA"; DEEPEP_ENVS+=(-e NCCL_IB_HCA="$IB_HCA")
+    else
+        # Type 5 is a PAIR -- see reason (2) in the GIN block. Setting
+        # NCCL_GIN_TYPE=5 without this crashes in NCCL's symmetric GIN kernels.
+        DEEPEP_ENVS+=(-e NCCL_SYM_GIN_KERNELS_ENABLE=0)
+        # Prefix pin, and only on a mixed device list -- reason (3).
+        if [[ -n "$EFA_HCA" ]]; then
+            hca="$EFA_HCA"; DEEPEP_ENVS+=(-e NCCL_IB_HCA="$EFA_HCA")
+        fi
+    fi
+    echo "DeepEP v2: ep=$EP_SIZE mode=$DEEPEP_V2_MODE runner=$MOE_RUNNER_BACKEND cap=$cap gin=$gin${hca:+ hca=$hca}" >&2
 }
