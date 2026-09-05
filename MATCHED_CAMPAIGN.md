@@ -105,6 +105,97 @@ mem 0.92/0.85, same ep=8. Median TPOT `pd1p1d:tp` 4.7/5.1/5.6 ms vs
 Still open after the termination: Q2 (`agg2:v2` at a matched chunk, and its
 2-machine counterpart) and the aggregated cross-node row.
 
+## PD's TTFT is the decode KV pool, not admission and not Mooncake
+
+Asked and answered 2026-09-05 from `pd1p1d:v2`'s own decode/prefill server logs
+(616 `.log` files in `results/`; Mooncake is byte-identical between the `:tp` and
+`:v2` arms, so the finding covers both).
+
+**Not the `max_running_requests=48` wall.** Decode `#queue-req` was 0 in
+**5067/5067** samples at c=64, `#running-req` never exceeded **29**, and
+`#retracted-req` was 0.
+
+**Not Mooncake.** Prefill `#inflight-req` -- requests with a KV transfer actually
+in flight -- has max 2/2/3 and mean 1.8/1.8/1.9 at c=16/32/64. A 4x load range
+moves it by one request; a transport that were the bottleneck would back up.
+Bandwidth agrees: KV is 6.87 GB / 266816 tokens ~ 26 KB/token, so a 8192-token
+request is ~232 MB and 2.47 req/s is **~0.6 GB/s** aggregate over 16 EFA NICs.
+The fixed cost is separately measured: at isl=128, where KV is 3.2 MB and
+transfer time is noise, PD's TTFT is still 831.6 ms against `agg4:tp`'s 147.2 ms
+-- **~684 ms of protocol**, which is **~4%** of the 16.0 s TTFT at isl=8192.
+
+**It is the KV pool.** `#tokens: 266816` / 9216 per request (8192 in + 1024 out)
+= **28.9**, exactly the observed `#running-req` ceiling of 29, with
+`full token usage` p90 = **0.94** at both c=32 and c=64 (0.52 at c=16). A
+saturated pool cannot pre-allocate, so decode withholds the bootstrap handshake
+and prefill's requests wait in `#bootstrap-req`: nonzero in 3% / 56% / **79%** of
+samples at c=16/32/64, mean 0.0 / 1.4 / **14.5**, max 36, mirrored by decode's
+`#prealloc-req` (max 36). That wait is upstream of any KV transfer and lands
+entirely inside TTFT.
+
+**Compounded by prefill saturation.** The prefill-only ceiling is ~21.8k in tok/s
+per box (65150.2/3 = 21717; 43699.9/2 = 21850). `pd1p1d` mixed at c=64 reaches
+20241 -- **92.8%** of its single prefill box's own ceiling -- and prefill
+`#queue-req` is nonzero in 61% of samples (max 28). So even a perfect pool leaves
+1P1D prefill-bound at c=64.
+
+**The headroom is idle.** Decode ledger, per GPU, all lines from one log:
+
+```
+265.83 avail -> weights 213.79 -> 52.04 -> draft model 1.06 -> 50.98
+KV 6.87 + mamba 4.32           -> 38.26   (Memory pool end)
+target-verify CUDA graph 15.79  -> 20.37
+DeepEP symmetric pool 4 GiB, draft graph 0.03 -> 14.93 avail at steady state
+```
+
+~14.9 GB of the 0.15 slack is never touched. Each +0.01 of `mem_fraction_static`
+moves ~2.66 GB into the pool (~100k tokens, ~11 more resident requests at this
+shape); 48 resident needs ~11.8 GB, i.e. ~0.868. Mamba is not binding (usage max
+0.47 of 64 slots).
+
+`DECODE_CAP` cannot buy the same memory: 512 -> 128 frees 8.57 GB of capture pool
+but `max_running_requests x (SPEC_BLOCK_SIZE+1) <= DECODE_CAP` then forces
+MAXRUN ~ 16, **below** the 29 we already have. The levers are mem-fraction and
+`cuda_graph_max_bs`.
+
+`95_matched_followup.sh` **stage G** tests it: `pd1p1d:v2` at D mem-fraction
+0.90 / 0.88 / 0.86, stepping down only on a failure to boot, against the
+published (unstamped = 0.85) row. Not yet run -- it needs machines.
+
+## Harness changes made alongside, 2026-09-05
+
+All motivated by something that actually went wrong here.
+
+- **`94_matched.sh` pulls after every arm** (`PULL_PER_ARM=0` to disable). Stage E
+  lost nine completed runs because JSONs sat on hosts until an end-of-campaign
+  pull. The pull is scoped to that arm's hosts and non-fatal.
+- **Mem-fraction is per-role and in the filename.** `env_common.sh` honoured
+  `MEM_FRACTION` (role-blind: hits prefill and decode alike, and they want
+  opposite values) but silently discarded `DECODE_MEM_FRACTION`, because the
+  PROFILE table assigns it with a plain `=`. Now a caller's value wins, is
+  validated as a decimal in (0,1), and is forwarded to the one launcher that
+  reads it. Critically, the run tag gains `-dmf0.88`/`-pmf`/`-smf` when a
+  fraction leaves its profile value -- **without that, a rerun at 0.88 writes the
+  published 0.85 row's exact filenames and `sync.sh pull` overwrites the
+  baseline.** `gen_synthesis.py` reads the stamp into the arm label
+  (`pd1p1d:v2/d0.88`), so a stamped and an unstamped run cannot merge into one
+  cell as extra replicates. An unstamped name means the profile value.
+- **`note_kv_pool`** prints, per decoding instance, the pool in tokens and the
+  residency it implies against MAXRUN, flagging `POOL BINDS FIRST`. This is the
+  admission limit `max_running_requests` does not show, and it took six days of
+  log archaeology to find once.
+- **`wait_ready` exits on a died container** (`WAIT_CONTAINER`, `docker inspect
+  -f '{{.State.Status}}'`, plus the last 15 log lines). An instance that OOMs in
+  capture at t=3min used to burn the full 30-minute timeout -- unaffordable for a
+  ladder whose whole point is to find where OOM starts.
+- **`snapshot_log` does `mkdir -p`** on the remote `results/`. `sync.sh push`
+  excludes `results/`, so on a fresh host the shell redirect failed before docker
+  ran and every snapshot of the first arm silently produced nothing.
+- **Role-scoped resolution echoes** (`K3_ROLE`): a decode container's boot log no
+  longer carries `NNODES=1: PREFILL_MEM_FRACTION 0.85 -> 0.92`.
+- `gen_synthesis.py` column widths now follow the longest arm label, which also
+  fixes a pre-existing 2-char-per-column drift between header and data.
+
 ## Not measured -- do not infer these
 
 `95_matched_followup.sh` runs exactly these three arms. It gates on host

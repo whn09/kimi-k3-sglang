@@ -23,6 +23,10 @@ cd "$(dirname "$0")"
 # there would mean the scripts silently go stale on the two hosts that ARE up.
 HOSTS="${HOSTS:-B300-1 B300-2 B300-3 B300-4}"
 REMOTE="${REMOTE:-/home/ubuntu/kimi-k3-sglang}"
+# 94_matched.sh pulls after every arm with HOSTS scoped to that arm, and it owns
+# LOCAL_RESULTS; honour it here so the two cannot disagree about where results
+# land. Pull is additive (no --delete), so a per-arm pull is safe to repeat.
+LOCAL_RESULTS="${LOCAL_RESULTS:-results}"
 
 up() { ssh -o ConnectTimeout=10 -o BatchMode=yes "$1" true 2>/dev/null; }
 
@@ -35,10 +39,10 @@ push() {
 }
 
 pull() {
-    mkdir -p results
+    mkdir -p "$LOCAL_RESULTS"
     for h in $HOSTS; do
         if ! up "$h"; then echo "SKIP  $h (unreachable)"; continue; fi
-        rsync -az "$h:$REMOTE/results/" results/ 2>/dev/null && echo "pulled <- $h" \
+        rsync -az "$h:$REMOTE/results/" "$LOCAL_RESULTS/" 2>/dev/null && echo "pulled <- $h" \
             || echo "no results on $h"
     done
 }

@@ -17,6 +17,16 @@
 #         vs 1 chunk at isl=8192.
 #   F  4 machines        agg2x2node:v2 @ 8192 -> aggregated EP=16 across 2
 #         nodes: the only cross-node row that is not also a PD row.
+#   G  MACHINE_BUDGET=2  pd1p1d:v2 @ D mem-fraction 0.90/0.88/0.86 -> the fix for
+#         PD's TTFT. The cause is the decode KV pool (29 resident against
+#         MAXRUN=48), not admission and not Mooncake; ~14.9 GB/GPU of slack is
+#         idle. Ladder steps DOWN only on a boot failure -- see the block above
+#         the loop. Compared against the PUBLISHED unstamped pd1p1d:v2 row.
+#
+# Stage E completed on 2026-09-05 (pd1p1d:tp, salvaged) before the hosts were
+# terminated; E's agg2:v2, F and G have never run. E is left in place because it
+# is idempotent -- 94_matched.sh now pulls after every arm, so a repeat costs
+# time, not data.
 #
 # WHY THE GATE: 94_matched.sh runs teardown_all on every host it uses at line
 # 269, BEFORE its own preflight_free_gpus at 274. So the built-in safety cannot
@@ -158,6 +168,65 @@ if ! verify F agg2x2node v2 'ep=16' 'cap=8192 chunk=8192'; then
     stage F2 STANDALONE_CAP=4096 ARMS="agg2x2node:v2"
     verify F2 agg2x2node v2 'ep=16' 'cap=4096 chunk=4096'
 fi
+
+# ---- G: the decode KV pool, the actual cause of PD's TTFT -------------------
+# Established 2026-09-05 from pd1p1d:v2's own decode logs: TTFT is NOT the
+# max_running_requests=48 wall (`#queue-req` 0 in 5067/5067 samples) and NOT
+# Mooncake (`#inflight-req` flat at 2-3 across a 4x load range; ~0.6 GB/s of KV;
+# the isl=128 row puts the whole PD handoff at ~684 ms, 4% of a 16.0 s TTFT).
+# It is the KV pool: 266816 tokens / 9216 per request = 28.9, and `#running-req`
+# peaked at exactly 29 with `full token usage` p90 = 0.94. A saturated pool stops
+# pre-allocating, so decode withholds the bootstrap handshake and prefill's
+# requests sit in `#bootstrap-req` (max 36, nonzero in 79% of samples at c=64) --
+# a wait that lands entirely inside TTFT.
+#
+# The headroom is idle: ~14.9 GB per GPU is still free at steady state inside the
+# 0.15 slack. Each +0.01 of mem-fraction moves ~2.66 GB into the pool (~100k
+# tokens, ~11 more resident requests at this shape). 48 resident needs ~11.8 GB,
+# i.e. ~0.868. So the ladder goes DOWN from 0.90: we want the HIGHEST fraction
+# that still survives target-verify capture, and capture is what fails first.
+#   0.90 -> ~+13.3 GB, leaves ~1.6 GB.   Expected to be the edge.
+#   0.88 -> ~+8.0 GB,  leaves ~6.9 GB, ~60 resident.  The predicted answer.
+#   0.86 -> ~+2.7 GB,  leaves ~12.3 GB, ~39 resident. Still above 29.
+# Baseline for the comparison is the PUBLISHED pd1p1d:v2 row, which is unstamped
+# (= D 0.85); 94_matched.sh stamps -dmf<val> into every tag here so this arm
+# cannot overwrite it and gen_synthesis.py cannot average the two together.
+# wait_ready now exits on a died container, so a rung that OOMs costs ~3 min.
+#
+# Do NOT expect this to fix everything: prefill is separately at 92.8% of its own
+# prefill-only ceiling at c=64, so 1P1D stays prefill-bound there.
+kvfound() {   # kvfound <letter> <arm> <a2a> -- report note_kv_pool's verdict
+    local b; b=$(block "$LOG.$1.log" "$2" "$3")
+    local lines; lines=$(grep -o 'kv-pool:.*' <<<"$b" | sort -u)
+    if [[ -z "$lines" ]]; then
+        say "KVPOOL $2:$3 -- no kv-pool line (note_kv_pool did not fire)"
+        return 1
+    fi
+    say "KVPOOL $2:$3 --"; sed 's/^/    /' <<<"$lines" | tee -a "$PROG"
+    ! grep -q 'POOL BINDS FIRST' <<<"$lines"
+}
+
+# The ladder steps down ONLY on a failure to boot. A rung that boots is the
+# highest bootable fraction, hence the biggest pool available -- going lower from
+# there would shrink the very thing being fixed, whether or not the pool cleared
+# MAXRUN. So a successful rung always ends the ladder; kvfound only decides what
+# the log says about it.
+for mf in 0.90 0.88 0.86; do
+    s="G${mf#0.}"
+    stage "$s" MACHINE_BUDGET=2 DECODE_MEM_FRACTION="$mf" ARMS="pd1p1d:v2"
+    if verify "$s" pd1p1d v2 "kimi-k3-decode' (profile=low-latency, mem=$mf"; then
+        if kvfound "$s" pd1p1d v2; then
+            say "stage $s: D=$mf boots and the pool clears MAXRUN -- ladder done"
+        else
+            say "stage $s: D=$mf boots but the pool STILL binds below MAXRUN."
+            say "           Do not step down (that shrinks it further). The next"
+            say "           lever is cuda_graph_max_bs, not mem-fraction."
+        fi
+        break
+    fi
+    say "stage $s: D=$mf produced no benchable arm -- stepping down"
+done
+unset mf s
 
 # ---- collect ----
 say "pull + regenerate"

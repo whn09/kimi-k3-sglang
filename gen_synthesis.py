@@ -19,6 +19,14 @@ STEM = re.compile(
     r"isl(?P<isl>\d+)-osl(?P<osl>\d+)-c(?P<c>\d+)-n\d+-r(?P<rep>\d+)\.json$"
 )
 
+# 94_matched.sh stamps -smf/-pmf/-dmf<value> into the run tag when the caller
+# moves a role's mem_fraction_static off its PROFILE value. That stamp has to
+# reach the ARM LABEL, not just the filename: two runs of pd1p1d:v2 at D=0.85 and
+# D=0.88 are different configurations, and if the label ignored the stamp they
+# would land in one cell and be averaged as extra replicates of each other. An
+# unstamped name means the profile value (low-latency: S 0.85 / P 0.92 / D 0.85).
+MFSTAMP = re.compile(r"-([spd])mf([\d.]+)")
+
 WORKLOAD = {
     (8192, 1024): "mixed    isl=8192 osl=1024",
     (8192, 1): "prefill  isl=8192 osl=1",
@@ -55,6 +63,8 @@ def load(root):
             continue
         a2a = "tp" if "tponly" in path.name else "v2"
         arm = f"{m['arm']}:{a2a}"
+        mf = "".join(f"/{r}{v}" for r, v in MFSTAMP.findall(path.name))
+        arm += mf
         cpm = c // mach
         d = json.loads(path.read_text())
         if d.get("_salvaged_from"):
@@ -91,6 +101,25 @@ WORKING_BOXES = {
 ADMIT_CAP = {"pd2p2d:v2": 48, "pd1p3d:v2": 48, "pd1p1d:v2": 48}
 
 
+# A mem-fraction stamp changes the arm LABEL but not its layout, so the box
+# count and admission cap are looked up under the unstamped name.
+def base_arm(arm):
+    return arm.split("/")[0]
+
+
+# The baseline is the plain-TP arm at its PROFILE mem-fractions: an unstamped
+# ":tp". Falling back to a STAMPED tp arm would silently rebase every ratio in
+# the table on the variant instead of the published row.
+def pick_base(arms):
+    for a in arms:
+        if a.endswith(":tp"):
+            return a
+    for a in arms:
+        if ":tp" in a:
+            return a
+    return arms[0]
+
+
 def per_box(cells, wl, key):
     """[(arm, req/box, metric/box)] for the arms whose box count we know."""
     boxes = WORKING_BOXES.get(wl)
@@ -98,10 +127,10 @@ def per_box(cells, wl, key):
         return None
     out = []
     for (w, mach, cpm, arm), d in cells.items():
-        if w != wl or arm not in boxes or key not in d:
+        if w != wl or base_arm(arm) not in boxes or key not in d:
             continue
-        n = boxes[arm]
-        admitted = min(mach * cpm, n * ADMIT_CAP.get(arm, 10**9))
+        n = boxes[base_arm(arm)]
+        admitted = min(mach * cpm, n * ADMIT_CAP.get(base_arm(arm), 10**9))
         out.append((arm, admitted / n, mean(d[key]) / n))
     return sorted(out)
 
@@ -127,21 +156,21 @@ def print_per_box(cells):
         print(f"\n=== per working box, matched load -- {wl}")
         print(f"    metric={key}, baseline={base} "
               f"({', '.join(f'{r:.0f} req/box -> {v:.1f}' for r, v in sorted(curve.items()))})")
-        print(f"{'arm':<12}{'req/box':>9}{'per box':>10}{'base@same':>11}{'ratio':>8}")
+        print(f"{'arm':<20}{'req/box':>9}{'per box':>10}{'base@same':>11}{'ratio':>8}")
         for arm, r, v in rows:
             if arm == base:
                 continue
             b = interp(curve, r)
             tail = (f"{b:>11.1f}{v/b:>8.3f}" if b
                     else f"{'-':>11}{'  n/a: outside baseline range':>8}")
-            print(f"{arm:<12}{r:>9.1f}{v:>10.1f}" + tail)
+            print(f"{arm:<20}{r:>9.1f}{v:>10.1f}" + tail)
 
 
 def print_inventory(cells):
     """What was actually run -- so the reader never has to trust a claim about
     which arms exist. An arm absent here was NOT measured."""
     print("=== inventory: arms actually measured (timed replicates only)")
-    print(f"{'workload':<26}{'machines':>9}{'arm':>13}{'c':>18}{'reps':>6}{'source':>10}")
+    print(f"{'workload':<26}{'machines':>9}{'arm':>20}{'c':>18}{'reps':>6}{'source':>10}")
     seen = defaultdict(set)
     reps = defaultdict(int)
     for (wl, mach, cpm, arm), d in cells.items():
@@ -153,7 +182,7 @@ def print_inventory(cells):
         cs = ",".join(str(c) for c in sorted(seen[k]))
         src = "SALVAGED" if any((wl, mach, c // mach, arm) in SALVAGED
                                 for c in seen[k]) else "pulled"
-        print(f"{wl:<26}{mach:>9}{arm:>13}{cs:>18}{reps[k]:>6}{src:>10}")
+        print(f"{wl:<26}{mach:>9}{arm:>20}{cs:>18}{reps[k]:>6}{src:>10}")
 
 
 def main(root):
@@ -166,12 +195,18 @@ def main(root):
         for mach in sorted({k[1] for k in keys}):
             arms = sorted({k[3] for k in keys if k[1] == mach})
             cpms = sorted({k[2] for k in keys if k[1] == mach})
-            base = next((a for a in arms if a.endswith(":tp")), arms[0])
+            base = pick_base(arms)
             print(f"\n=== {wl}   {mach} machines   baseline={base}")
-            head = f"{'metric':<13}{'c':>5}" + "".join(f"{a:>17}" for a in arms)
+            # Column widths follow the LONGEST arm label, because a mem-fraction
+            # stamp makes labels like 'pd1p1d:v2/d0.88' and a fixed 17 both
+            # truncated the header and drifted it 2 chars per column off the
+            # 15-char data cells. One width for both, computed once.
+            W = max(17, max(len(a) for a in arms) + 2)
+            WR = max(13, max((len(a) + 3 for a in arms if a != base), default=13))
+            head = f"{'metric':<13}{'c':>5}" + "".join(f"{a:>{W}}" for a in arms)
             # Full arm name, a2a kind included: stripping it printed two
             # identical 'xpd1p1d' columns once pd1p1d:tp joined pd1p1d:v2.
-            print(head + "".join(f"{'  x'+a:>13}"
+            print(head + "".join(f"{'x'+a:>{WR}}"
                                  for a in arms if a != base))
             for label, key, fmt, lower_better in METRICS:
                 if key in DEGENERATE.get(wl, ()):
@@ -184,20 +219,20 @@ def main(root):
                     for a in arms:
                         v = cells[(wl, mach, cpm, a)].get(key)
                         if not v:
-                            row += f"{'-':>17}"
+                            row += f"{'-':>{W}}"
                             continue
                         vals[a] = mean(v)
                         sp = spread(v)
                         flag = "!" if sp > 5 else " "
                         tail = " n=1" if len(v) < 2 else f"{sp:4.1f}%"
-                        row += (fmt % vals[a]) + flag + tail
+                        row += f"{(fmt % vals[a]) + flag + tail:>{W}}"
                     for a in arms:
                         if a == base:
                             continue
                         if a in vals and base in vals and vals[base]:
-                            row += f"{vals[a]/vals[base]:13.3f}"
+                            row += f"{vals[a]/vals[base]:{WR}.3f}"
                         else:
-                            row += f"{'-':>13}"
+                            row += f"{'-':>{WR}}"
                     print(row)
                 print()
     print_per_box(cells)

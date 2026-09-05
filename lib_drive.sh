@@ -136,13 +136,32 @@ teardown_all() {
 
 # 60 x 30 s = 30 min. A cold K3 is ~4 min with the JIT caches warm and ~10 min
 # without, so this only trips on a real failure.
+# WAIT_CONTAINER is the container whose death means this wait can never succeed.
+# Without it an instance that OOMs in graph capture at t=3min still burns the
+# full 30 minutes, and a mem-fraction ladder that is SUPPOSED to hit OOM costs
+# half an hour per rung instead of three minutes. `docker inspect` on a
+# `docker run -d` container that exited still answers, so the status is readable
+# after the fact; only a name that was never created reads empty, which is also
+# a dead end.
 wait_ready() {
-    local host="$1" port="$2" label="$3" i code
+    local host="$1" port="$2" label="$3" i code st
     if [[ "${DRY_RUN:-0}" == "1" ]]; then say "  (dry) would wait for $label on $host:$port"; return 0; fi
     for i in $(seq 1 "${READY_STEPS:-60}"); do
         code=$(ssh -o ConnectTimeout=10 "$host" \
             "curl -s -m 5 -o /dev/null -w '%{http_code}' http://localhost:$port/health" 2>/dev/null)
         [[ "$code" == "200" ]] && { say "  ready: $label after $((i*30))s"; return 0; }
+        if [[ -n "${WAIT_CONTAINER:-}" ]]; then
+            st=$(ssh -o ConnectTimeout=10 "$host" \
+                "docker inspect -f '{{.State.Status}}' ${WAIT_CONTAINER} 2>/dev/null" 2>/dev/null \
+                | tr -d '[:space:]')
+            if [[ "$st" == "exited" || "$st" == "dead" ]]; then
+                say "  DIED: $label -- $WAIT_CONTAINER on $host is '$st' after $((i*30))s"
+                say "$(ssh -o ConnectTimeout=10 "$host" \
+                        "docker logs --tail 15 ${WAIT_CONTAINER} 2>&1" 2>/dev/null \
+                        | sed 's/^/      /')"
+                return 1
+            fi
+        fi
         sleep 30
     done
     say "  TIMEOUT waiting for $label ($host:$port)"
@@ -230,12 +249,47 @@ note_arg() {
     say "  note $host/$name $key=${got//[[:space:]]/}"
 }
 
+# THE KV POOL IS THE ADMISSION LIMIT THAT max_running_requests DOES NOT SHOW.
+# A decode instance can only hold ceil-fit(pool / tokens_per_request) requests
+# resident no matter what MAXRUN says, and when it saturates it stops
+# pre-allocating, withholds the PD bootstrap handshake, and the wait shows up as
+# TTFT on the prefill side -- which reads like a slow KV transfer. On 2026-09-05
+# pd1p1d:v2 had 266816 tokens / 9216 per request = 28.9 against MAXRUN=48, and
+# `#running-req` peaked at 29. So print the derived residency next to the
+# ceiling, every arm, rather than deriving it from a log six days later.
+# Reports only: a pool that binds below MAXRUN is a finding, not a reason to
+# refuse to benchmark.
+note_kv_pool() {
+    local host="$1" name="$2" tpr="$3" maxrun="$4" line tok gb
+    if [[ "${DRY_RUN:-0}" == "1" ]]; then return 0; fi
+    line=$(ssh -o ConnectTimeout=15 "$host" \
+        "docker logs $name 2>&1 | grep -m1 'KV Cache is allocated'" 2>/dev/null)
+    tok=$(sed -nE 's/.*#tokens:[[:space:]]*([0-9]+).*/\1/p' <<<"$line")
+    gb=$(sed -nE 's/.*KV size:[[:space:]]*([0-9.]+) GB.*/\1/p' <<<"$line")
+    if [[ -z "$tok" ]]; then
+        say "  note $host/$name kv-pool: no 'KV Cache is allocated' line -- pattern stale?"
+        return 0
+    fi
+    if (( tpr <= 0 )); then
+        say "  note $host/$name kv-pool: ${tok} tokens (${gb:-?} GB)"
+        return 0
+    fi
+    local res=$(( tok / tpr ))
+    local verdict="pool >= MAXRUN, admission is the limit"
+    (( res < maxrun )) && verdict="POOL BINDS FIRST: $res < MAXRUN=$maxrun -- expect bootstrap backpressure in TTFT"
+    say "  note $host/$name kv-pool: ${tok} tokens (${gb:-?} GB) / ${tpr} per req = ${res} resident; $verdict"
+}
+
 # The bench client's percentiles cannot tell "generating slower" from "queued
 # behind a preemption", and the container is gone by the time anyone reads the
 # summary. Snapshot EVERY node, not just rank 0: dispatch/combine time is
 # node-layered and the slow node flips between runs
 # (project_deepep_combine_is_node_layered).
+# mkdir -p, because `docker logs > missing/dir/file` fails in the SHELL before
+# docker runs and the redirect swallows the error: on a freshly pushed host
+# results/ does not exist yet (sync.sh push excludes it), and every snapshot of
+# the campaign's first arm silently produced nothing.
 snapshot_log() {
     local host="$1" name="$2" tag="$3" remote="$4"
-    sshx "$host" "docker logs $name > $remote/results/${tag}.${host}.${name}.log 2>&1" || true
+    sshx "$host" "mkdir -p $remote/results && docker logs $name > $remote/results/${tag}.${host}.${name}.log 2>&1" || true
 }

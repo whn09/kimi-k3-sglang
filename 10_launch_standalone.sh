@@ -15,6 +15,9 @@
 set -euo pipefail
 
 cd "$(dirname "$0")"
+# K3_ROLE keeps env_common.sh's mem-fraction resolution lines scoped to THIS
+# role; without it a decode container's boot log carries prefill's clamp.
+K3_ROLE=standalone
 source ./env_common.sh
 
 NAME="${NAME:-kimi-k3}"

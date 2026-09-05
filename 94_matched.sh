@@ -39,6 +39,30 @@ cd "$(dirname "$0")"
 # WL has to be exported BEFORE env_common.sh is sourced -- that is where the
 # shape presets are resolved.
 export WL="${WL:-mixed}"
+# The per-role mem-fractions have to be captured BEFORE env_common.sh, because it
+# always assigns them (from PROFILE, then two clamps). After sourcing, "was it
+# the caller or the profile?" is unanswerable, and forwarding the laptop-resolved
+# value would pin this laptop's NNODES=1 clamp onto a cross-node arm.
+#
+# The same capture also builds MFSTAMP, and that part is not optional. The run
+# tag is arm-m<N>-profile-<a2atag>-isl...-c...-r..., which does NOT contain a
+# mem-fraction -- so `DECODE_MEM_FRACTION=0.88 ARMS=pd1p1d` produces byte-for-byte
+# the same filenames as the published 0.85 row, and `sync.sh pull` (rsync, newer
+# wins) would overwrite the baseline with the variant. Stamped only when the
+# caller moves a fraction off its profile value, so every existing filename stays
+# valid and re-pullable; an UNSTAMPED name therefore means the PROFILE value
+# (low-latency: S 0.85 / P 0.92-after-clamp / D 0.85). gen_synthesis.py reads the
+# stamp into the arm label so a stamped and an unstamped run can never merge into
+# one cell as extra replicates.
+MF_FWD=""; MFSTAMP=""
+for _v in STANDALONE_MEM_FRACTION PREFILL_MEM_FRACTION DECODE_MEM_FRACTION; do
+    [[ -z "${!_v:-}" ]] && continue
+    MF_FWD="$MF_FWD $_v=${!_v}"
+    # smf / pmf / dmf -- the role has to be in the stamp because prefill and
+    # decode want opposite values and a bare "mf0.88" would not say which moved.
+    MFSTAMP="$MFSTAMP-$(echo "${_v%_MEM_FRACTION}" | cut -c1 | tr 'A-Z' 'a-z')mf${!_v}"
+done
+unset _v
 source ./env_common.sh
 source ./lib_drive.sh
 
@@ -118,6 +142,11 @@ for _v in IMAGE PREFILL_CAP DECODE_CAP STANDALONE_CAP DECODE_MAXRUN DECODE_CGMAX
     [[ -n "${!_v:-}" ]] && FWD="$FWD $_v=${!_v}"
 done
 unset _v
+# MEM_FRACTION above is role-BLIND: in a PD arm it hits prefill and decode alike,
+# and those want opposite values (prefill needs 0.92 at TP=8 or it has no KV pool
+# at all; decode needs headroom for target-verify capture). The three role vars
+# are forwarded instead, each read by exactly one launcher.
+FWD="$FWD$MF_FWD"
 
 if [[ -z "${WL_PPC:-}" ]]; then
     say "ERROR: WL='$WL' has no preset. This driver needs a named shape"
@@ -168,7 +197,7 @@ if [[ -n "$CONCURRENCIES" ]]; then
 else
     CSTAMP="cpm$(echo "$CONC_PER_MACHINE" | tr ' ' '_')"
 fi
-CTAG="matched-${WL}-$(echo "$ARMS" | tr ' :' '__')-${CSTAMP}"
+CTAG="matched-${WL}-$(echo "$ARMS" | tr ' :' '__')-${CSTAMP}${MFSTAMP}"
 SUMMARY="$LOCAL_RESULTS/${CTAG}.txt"
 : > "$SUMMARY"
 
@@ -301,8 +330,15 @@ for arm_entry in $ARMS; do
     # ---- wait ----
     ready=1
     for i in "${!I_ROLE[@]}"; do
+        case "${I_ROLE[$i]}" in
+            S) WAIT_CONTAINER=kimi-k3 ;;
+            P) WAIT_CONTAINER=kimi-k3-prefill ;;
+            D) WAIT_CONTAINER=kimi-k3-decode ;;
+        esac
+        export WAIT_CONTAINER
         wait_ready "${I_RANK0[$i]}" "$PORT" "${I_ROLE[$i]}#$i on ${I_RANK0[$i]}" || ready=0
     done
+    unset WAIT_CONTAINER
     (( ready )) || { say "SKIP '$arm': an instance never became ready"; continue; }
 
     # ---- verify what actually launched, on EVERY node ----
@@ -334,6 +370,14 @@ for arm_entry in $ARMS; do
         note_arg "${I_RANK0[$i]}" "$cname" chunked_prefill_size
         note_arg "${I_RANK0[$i]}" "$cname" mem_fraction_static
         note_arg "${I_RANK0[$i]}" "$cname" max_running_requests
+        # The KV pool caps resident requests independently of max_running_requests
+        # and is the thing mem_fraction_static actually buys, so read it back for
+        # every role that decodes. tokens-per-request is ISL+OSL at this shape;
+        # DECODE_MAXRUN is unset unless the caller pinned it, and DSPARK forces 48.
+        if [[ "$role" != "P" ]]; then
+            note_kv_pool "${I_RANK0[$i]}" "$cname" \
+                "$(( WL_ISL + WL_OSL ))" "${DECODE_MAXRUN:-48}"
+        fi
     done
     (( ok )) || { say "SKIP '$arm': config mismatch -- refusing to benchmark an arm that is not what its name says"; continue; }
 
@@ -387,7 +431,7 @@ for arm_entry in $ARMS; do
     for c in $arm_concs; do
         n=$(( c * WL_PPC ))
         for r in $(seq "$(( WARMUP == 1 ? 0 : 1 ))" "$REPEATS"); do
-            tag="${arm}-m${machines}-${PROFILE}-${a2atag}-isl${WL_ISL}-osl${WL_OSL}-c${c}-n${n}-r${r}"
+            tag="${arm}-m${machines}-${PROFILE}-${a2atag}${MFSTAMP}-isl${WL_ISL}-osl${WL_OSL}-c${c}-n${n}-r${r}"
             if (( r == 0 )); then say "----- warmup (DISCARDED) c=$c  tag=$tag -----"
             else say "----- run $r/$REPEATS c=$c  tag=$tag -----"; fi
             sshx "$BENCH_HOST" "cd $REMOTE && WL=$WL ISL=$WL_ISL OSL=$WL_OSL \
@@ -410,6 +454,19 @@ for arm_entry in $ARMS; do
             done
         done
     done
+
+    # PULL NOW, NOT AT THE END OF THE CAMPAIGN.
+    # 91_bench.sh writes each bench JSON on the HOST. On 2026-09-05 all four
+    # B300 were terminated ("User initiated") ~20 min into a multi-hour
+    # follow-up campaign, and pd1p1d:tp's nine completed runs went with them --
+    # only the laptop-side driver log survived, and salvage_log_json.py had to
+    # rebuild the JSONs from its printed blocks. An arm is ~20 min and the pull
+    # is a few KB, so there is no reason to hold results on hardware that can
+    # disappear. Scoped to this arm's hosts; failures are reported, never fatal.
+    if [[ "${DRY_RUN:-0}" != "1" && "${PULL_PER_ARM:-1}" == "1" ]]; then
+        say "  pull    : results from$ARM_HOSTS -> $LOCAL_RESULTS"
+        HOSTS="${ARM_HOSTS# }" bash sync.sh pull 2>&1 | sed 's/^/    /' | tee -a "$SUMMARY"
+    fi
 done
 
 if [[ "$TEARDOWN_AT_END" == "1" ]]; then

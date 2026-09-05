@@ -125,8 +125,30 @@ IMAGE="${IMAGE:-kimi-k3-efa-v2:nccl2312}"
 # measurements. Prefill mirrors the decode ratio for the same reason it mirrors
 # dcp; mem-fraction stays 0.85 because only the decode node raises it to 0.92.
 #
+# Every launcher sources this file, so the mem-fraction rules at the bottom used
+# to print "NNODES=1: PREFILL_MEM_FRACTION 0.85 -> 0.92" into a DECODE
+# container's boot log -- a resolution for a role that container is not, sitting
+# right next to its own numbers. K3_ROLE is set by each launcher before sourcing;
+# when it is unset (the laptop-side drivers source this file too) everything
+# prints, because there the reader wants the whole resolution.
+K3_ROLE="${K3_ROLE:-}"
+mf_note() {   # mf_note <standalone|prefill|decode> <message...>
+    local r="$1"; shift
+    [[ -z "$K3_ROLE" || "$K3_ROLE" == "$r" ]] && echo "$@" >&2
+    return 0
+}
+
 # Select with PROFILE=low-latency|balanced|high-throughput.
 PROFILE="${PROFILE:-low-latency}"
+# The three mem-fractions are the one knob in this table a caller needs to move
+# per ROLE, and the assignments below are plain `=`, so an exported
+# DECODE_MEM_FRACTION was silently discarded. MEM_FRACTION= does reach the
+# launchers, but it is role-blind: in a PD arm it lands on prefill AND decode,
+# and those two want opposite values (see the two clamps at the end of this
+# file). Capture the caller's values here and re-apply them after the table.
+_MF_IN_STANDALONE="${STANDALONE_MEM_FRACTION:-}"
+_MF_IN_PREFILL="${PREFILL_MEM_FRACTION:-}"
+_MF_IN_DECODE="${DECODE_MEM_FRACTION:-}"
 case "$PROFILE" in
     low-latency)
         # standalone
@@ -156,6 +178,24 @@ case "$PROFILE" in
         PREFILL_MAMBA_RATIO=1.03; PREFILL_MEM_FRACTION=0.85 ;;
     *) echo "unknown PROFILE '$PROFILE' (low-latency|balanced|high-throughput)" >&2; exit 1 ;;
 esac
+for _r in STANDALONE PREFILL DECODE; do
+    eval "_in=\"\$_MF_IN_$_r\""
+    if [[ -n "$_in" ]]; then
+        # A mem-fraction is a bare decimal in (0,1). Refuse anything else HERE:
+        # the alternative is a 6-minute weight load ending in an argparse error,
+        # or -- worse -- an env string that word-split into the value and was
+        # then eval'd. Both have happened while testing this block.
+        if ! [[ "$_in" =~ ^0\.[0-9]+$ ]]; then
+            echo "ERROR: ${_r}_MEM_FRACTION='$_in' is not a decimal in (0,1)" >&2
+            exit 1
+        fi
+        eval "_was=\"\$${_r}_MEM_FRACTION\""
+        [[ "$_in" != "$_was" ]] && mf_note "$(echo "$_r" | tr 'A-Z' 'a-z')" \
+            "${_r}_MEM_FRACTION $_was -> $_in (caller override of PROFILE=$PROFILE)"
+        eval "${_r}_MEM_FRACTION=\"\$_in\""
+    fi
+done
+unset _r _in _was _MF_IN_STANDALONE _MF_IN_PREFILL _MF_IN_DECODE
 
 # ---- model / serving ----
 TP_SIZE="${TP_SIZE:-8}"
@@ -609,7 +649,8 @@ MULTINODE_MEM_FRACTION="${MULTINODE_MEM_FRACTION:-0.78}"
 if (( NNODES > 1 )); then
     for _v in STANDALONE_MEM_FRACTION PREFILL_MEM_FRACTION DECODE_MEM_FRACTION; do
         if awk "BEGIN{exit !(${!_v} > $MULTINODE_MEM_FRACTION)}"; then
-            echo "NNODES=$NNODES: $_v ${!_v} -> $MULTINODE_MEM_FRACTION (TP=$TP_SIZE has a bigger KV pool)" >&2
+            mf_note "$(echo "${_v%_MEM_FRACTION}" | tr 'A-Z' 'a-z')" \
+                "NNODES=$NNODES: $_v ${!_v} -> $MULTINODE_MEM_FRACTION (TP=$TP_SIZE has a bigger KV pool)"
             eval "$_v=$MULTINODE_MEM_FRACTION"
         fi
     done
@@ -636,10 +677,52 @@ fi
 SINGLENODE_PREFILL_MEM_FRACTION="${SINGLENODE_PREFILL_MEM_FRACTION:-0.92}"
 if (( NNODES == 1 )); then
     if awk "BEGIN{exit !($PREFILL_MEM_FRACTION < $SINGLENODE_PREFILL_MEM_FRACTION)}"; then
-        echo "NNODES=1: PREFILL_MEM_FRACTION $PREFILL_MEM_FRACTION -> $SINGLENODE_PREFILL_MEM_FRACTION (TP=$TP_SIZE keeps full weights; 0.85 leaves no KV pool)" >&2
+        mf_note prefill "NNODES=1: PREFILL_MEM_FRACTION $PREFILL_MEM_FRACTION -> $SINGLENODE_PREFILL_MEM_FRACTION (TP=$TP_SIZE keeps full weights; 0.85 leaves no KV pool)"
         PREFILL_MEM_FRACTION="$SINGLENODE_PREFILL_MEM_FRACTION"
     fi
 fi
+
+# WHY YOU WOULD RAISE DECODE_MEM_FRACTION, AND WHAT THE CEILING IS.
+# Measured 2026-09-05 from pd1p1d:v2's decode logs: PD's bad TTFT at isl=8192 is
+# neither the max_running_requests=48 wall (`#queue-req` was 0 in 5067/5067
+# samples) nor Mooncake (`#inflight-req` flat at 2-3 across a 4x load range). It
+# is the KV pool. At DECODE_MEM_FRACTION=0.85, TP=8:
+#     KV Cache is allocated. #tokens: 266816, KV size: 6.87 GB   (~26 KB/token)
+#     266816 / 9216 tokens-per-request (8192 in + 1024 out) = 28.9
+# and `#running-req` peaked at exactly 29 with `full token usage` p90 = 0.94.
+# Decode then cannot pre-allocate for a 30th request (`#prealloc-req` max 36),
+# so it withholds the bootstrap handshake and the PREFILL box's requests sit in
+# `#bootstrap-req` (max 36, mean 14.5, nonzero in 79% of samples at c=64) -- a
+# wait that is upstream of any KV transfer and lands entirely inside TTFT.
+#
+# The headroom is real and idle. The same log's ledger, per GPU:
+#     265.83 avail -> weights 213.79 -> 52.04 -> draft 1.06 -> 50.98
+#     KV 6.87 + mamba 4.32              -> 38.26  (Memory pool end)
+#     target-verify CUDA graph 15.79    -> 20.37
+#     DeepEP symmetric pool 4 GiB, draft graph 0.03 -> 14.93 avail at steady state
+# So ~14.9 GB of the 0.15 slack is never touched. Each +0.01 of mem-fraction
+# moves ~2.66 GB from slack into the KV pool, i.e. ~100k tokens ~ 11 more
+# resident requests at this shape. Holding all 48 admitted slots needs
+# 48 x 9216 = 442368 tokens ~ 11.8 GB, i.e. +4.9 GB => 0.868. 0.88 reaches ~60
+# requests and still leaves ~7 GB; 0.92 would consume ~18.5 GB of a 14.9 GB
+# surplus and is expected to die in target-verify capture.
+#
+# NOT changed here, deliberately: every published PD row ran D=0.85, and moving
+# the default would rewrite the baseline of a table nobody can re-measure right
+# now (B300-1..4 are terminated). Pass it explicitly instead --
+# `DECODE_MEM_FRACTION=0.88 bash 94_matched.sh` -- which the block after the
+# PROFILE table now honours and 94_matched.sh forwards to the decode launcher
+# only. 95_matched_followup.sh stage G runs the ladder 0.90 -> 0.88 -> 0.86 and
+# reads the resulting pool back out of the log with note_kv_pool.
+#
+# Two things this cannot fix, so do not expect more than the pool from it:
+#   - the prefill box is already at 92.8% of its own prefill-only ceiling
+#     (20241 vs ~21.8k in tok/s), so 1P1D at c=64 stays prefill-bound;
+#   - DECODE_CAP cannot be traded for the same memory. Lowering it to 128 frees
+#     8.57 GB of capture pool (project_k3_pd_decode_cap) but
+#     max_running_requests x (SPEC_BLOCK_SIZE+1) <= DECODE_CAP then forces
+#     MAXRUN ~ 16, BELOW the 29 we already have. The memory has to come from the
+#     slack or from cuda_graph_max_bs, not from cap.
 
 # GIN TYPE 5 NEEDS A CROSS-NODE INSTANCE; A SINGLE-NODE `direct` INSTANCE NEEDS 3.
 # Settled 2026-09-04 on a clean same-host contrast: a 1-node ep=8 direct decode

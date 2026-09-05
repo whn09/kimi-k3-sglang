@@ -201,3 +201,11 @@ layout  : S:B300-1 S:B300-2
       a2a=deepep_v2 ep=8 mode=direct cap=8192 chunk=8192
     health: curl -s localhost:30000/health_generate
   TIMEOUT waiting for S#0 on B300-1 (B300-1:30000)
+  TIMEOUT waiting for S#1 on B300-2 (B300-2:30000)
+SKIP 'agg2': an instance never became ready
+
+tearing down every container on B300-1 B300-2
+
+finished: 2026-09-05T11:54:45Z
+raw logs live on the hosts under /home/ubuntu/kimi-k3-sglang/results/ -- 'bash sync.sh pull' to fetch,
+then 'python3 gen_matched_table.py results' for the per-machine comparison.
