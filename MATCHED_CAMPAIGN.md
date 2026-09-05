@@ -77,12 +77,43 @@ block's number and its reasoning, not the original.
 
 ## Not measured -- do not infer these
 
+`95_matched_followup.sh` runs exactly these three arms. It gates on host
+idleness first, because `94_matched.sh` calls `teardown_all` on every host it
+uses at line 269, **before** its own `preflight_free_gpus` at 274 -- so that
+preflight cannot protect a foreign container, and the gate has to be outside.
+It also reads the chunk back out of each launcher's echo, scoped to that arm's
+`##########  arm=... a2a=...` block: `assert_cenv` checks cap but **not chunk**,
+and chunk is the axis that invalidated the arms below.
+
 - `pd*:tp` -- PD with the plain-TP MoE path. `94_matched.sh:256` supports it
   and labels it a control. Without it, **PD's effect cannot be separated from
-  v2's effect**, because every PD arm here runs v2.
-- `agg*:v2` at a chunk matched to its TP counterpart (see Retracted).
+  v2's effect**, because every PD arm here runs v2. `pd1p1d:tp` is a clean
+  control: at isl=8192 its prefill role is single-chunk too (`A2A=none` puts
+  `PREFILL_CHUNK` at 16384, v2 at `PREFILL_CAP`=8192) and both decode roles are
+  `cap=512 chunk=512`.
+- `agg*:v2` at a chunk matched to its TP counterpart (see Retracted). Fixed
+  with `STANDALONE_CAP=8192`, which drags `STANDALONE_CHUNK` with it.
+  **`agg2:tp` does not need rerunning:** `build_deepep_envs` returns before it
+  ever reads `cap` when `MOE_A2A_BACKEND=none`, so `STANDALONE_CAP` is a no-op
+  on a TP arm, and 16384 vs 8192 is one chunk either way at isl=8192.
 - `agg2x2node:v2` -- aggregated EP=16 across 2 nodes. The layout exists in
   `94_matched.sh:146`. Without it there is no aggregated cross-node row.
+
+Capacity sizes the DeepEP slab, `masked_max_m` **and** the decode-graph capture
+pool, so `STANDALONE_CAP=8192` can OOM where 1024 booted. The follow-up driver
+steps down 8192 -> 4096 -> 2048; if it lands below 8192, say so with the number,
+because 4096 is 2 chunks at isl=8192 and 2048 is 4.
+
+## Admission
+
+`audit_admission.py results` names the cells where an instance **sat** at its
+`max_running_requests` ceiling, read from the scheduler's own `#running-req`.
+Do not use the bench JSON's `concurrency` for this: it is
+`sum(e2e_latency)/duration`, a time average that ramp-up and drain depress on
+every short bench, so it flags healthy cells (0.66-0.75 on the 15-55 s decode
+benches). Across all 33 cells of this campaign exactly one is contaminated --
+`isl128/osl1024 pd2p2d c=128` -- and `gen_synthesis.py` already drops it from
+every per-box ratio as outside the baseline's measured range.
 
 The cross-node cost that *is* measured (`pd2x2` vs `pd2p2d`, same 4 machines,
 same PD shape, same cap/chunk) conflates crossing a node boundary with

@@ -1,0 +1,884 @@
+campaign: wl=mixed isl=8192 osl=1024 ppc=2 repeats=2 warmup=1
+conc    : 8 16 32 per machine (iso-load)
+arms    : agg4:tp agg4:v2 pd2p2d pd2x2
+image   : kimi-k3-efa-v2:nccl2312   profile=low-latency  radix=OFF
+policy  : router=round_robin (pinned by this driver)
+started : 2026-09-05T02:56:03Z
+  image kimi-k3-efa-v2:nccl2312 on B300-1: 5034486982b1
+  image kimi-k3-efa-v2:nccl2312 on B300-2: 5034486982b1 (match)
+  image kimi-k3-efa-v2:nccl2312 on B300-3: 5034486982b1 (match)
+  image kimi-k3-efa-v2:nccl2312 on B300-4: 5034486982b1 (match)
+
+##########  arm=agg4 a2a=tp machines=4  (2026-09-05T02:56:38Z)  ##########
+layout  : S:B300-1 S:B300-2 S:B300-3 S:B300-4
+  gpus free: B300-1
+  gpus free: B300-2
+  gpus free: B300-3
+  gpus free: B300-4
+  launch S rank0 on B300-1  (PROFILE=low-latency MOE_A2A_BACKEND=none DISABLE_RADIX=1 NNODES=1 NODE_RANK=0 TP_SIZE=8 IMAGE=kimi-k3-efa-v2:nccl2312 PREFILL_CAP=8192 DECODE_CAP=512 STANDALONE_CAP=1024 MOE_RUNNER_BACKEND=deep_gemm)
+    Warning: Permanently added 'ec2-3-37-122-249.ap-northeast-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    b19995a9bd78bd7759e281468cbe24ace3d585e4694e7db8062240ac84b24b24
+    launched 'kimi-k3' (profile=low-latency, dcp=1, mamba=0.86, mem=0.85)  ->  docker logs -f kimi-k3
+      a2a=none ep=8 mode=direct cap=1024 chunk=16384
+    health: curl -s localhost:30000/health_generate
+  launch S rank0 on B300-2  (PROFILE=low-latency MOE_A2A_BACKEND=none DISABLE_RADIX=1 NNODES=1 NODE_RANK=0 TP_SIZE=8 IMAGE=kimi-k3-efa-v2:nccl2312 PREFILL_CAP=8192 DECODE_CAP=512 STANDALONE_CAP=1024 MOE_RUNNER_BACKEND=deep_gemm)
+    Warning: Permanently added 'ec2-3-39-165-44.ap-northeast-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    d29d76a1cf5ff44615d4a75547f6d46543ceb67782400e3fbbb66096ae72ac56
+    launched 'kimi-k3' (profile=low-latency, dcp=1, mamba=0.86, mem=0.85)  ->  docker logs -f kimi-k3
+      a2a=none ep=8 mode=direct cap=1024 chunk=16384
+    health: curl -s localhost:30000/health_generate
+  launch S rank0 on B300-3  (PROFILE=low-latency MOE_A2A_BACKEND=none DISABLE_RADIX=1 NNODES=1 NODE_RANK=0 TP_SIZE=8 IMAGE=kimi-k3-efa-v2:nccl2312 PREFILL_CAP=8192 DECODE_CAP=512 STANDALONE_CAP=1024 MOE_RUNNER_BACKEND=deep_gemm)
+    Warning: Permanently added 'ec2-43-202-159-82.ap-northeast-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    df78b67b9505eb45a901b8ec3f7549748b21ef1f3a4cf3e19e1a2287eff53db7
+    launched 'kimi-k3' (profile=low-latency, dcp=1, mamba=0.86, mem=0.85)  ->  docker logs -f kimi-k3
+      a2a=none ep=8 mode=direct cap=1024 chunk=16384
+    health: curl -s localhost:30000/health_generate
+  launch S rank0 on B300-4  (PROFILE=low-latency MOE_A2A_BACKEND=none DISABLE_RADIX=1 NNODES=1 NODE_RANK=0 TP_SIZE=8 IMAGE=kimi-k3-efa-v2:nccl2312 PREFILL_CAP=8192 DECODE_CAP=512 STANDALONE_CAP=1024 MOE_RUNNER_BACKEND=deep_gemm)
+    Warning: Permanently added 'ec2-54-116-199-54.ap-northeast-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    6d8013895846340e6184b1f911956b230a28e3240dcd1fffc4c13edbb71224d1
+    launched 'kimi-k3' (profile=low-latency, dcp=1, mamba=0.86, mem=0.85)  ->  docker logs -f kimi-k3
+      a2a=none ep=8 mode=direct cap=1024 chunk=16384
+    health: curl -s localhost:30000/health_generate
+  ready: S#0 on B300-1 after 780s
+  ready: S#1 on B300-2 after 210s
+  ready: S#2 on B300-3 after 30s
+  ready: S#3 on B300-4 after 600s
+  verified B300-1/kimi-k3 NNODES=1
+  verified B300-1/kimi-k3 TP_SIZE=8
+  verified B300-1/kimi-k3 MOE_A2A_BACKEND=none
+  note B300-1/kimi-k3 chunked_prefill_size=16384
+  note B300-1/kimi-k3 mem_fraction_static=0.85
+  note B300-1/kimi-k3 max_running_requests=48
+  verified B300-2/kimi-k3 NNODES=1
+  verified B300-2/kimi-k3 TP_SIZE=8
+  verified B300-2/kimi-k3 MOE_A2A_BACKEND=none
+  note B300-2/kimi-k3 chunked_prefill_size=16384
+  note B300-2/kimi-k3 mem_fraction_static=0.85
+  note B300-2/kimi-k3 max_running_requests=48
+  verified B300-3/kimi-k3 NNODES=1
+  verified B300-3/kimi-k3 TP_SIZE=8
+  verified B300-3/kimi-k3 MOE_A2A_BACKEND=none
+  note B300-3/kimi-k3 chunked_prefill_size=16384
+  note B300-3/kimi-k3 mem_fraction_static=0.85
+  note B300-3/kimi-k3 max_running_requests=48
+  verified B300-4/kimi-k3 NNODES=1
+  verified B300-4/kimi-k3 TP_SIZE=8
+  verified B300-4/kimi-k3 MOE_A2A_BACKEND=none
+  note B300-4/kimi-k3 chunked_prefill_size=16384
+  note B300-4/kimi-k3 mem_fraction_static=0.85
+  note B300-4/kimi-k3 max_running_requests=48
+  router  : 4 independent workers  '172.31.17.128 172.31.29.80 172.31.26.115 172.31.26.251'
+  ready: agg router after 30s
+  conc    : 32 64 128  (8 16 32 x 4 machines)
+----- warmup (DISCARDED) c=32  tag=agg4-m4-low-latency-tponly-isl8192-osl1024-c32-n64-r0 -----
+Successful requests:                     64        
+Benchmark duration (s):                  24.03     
+Request throughput (req/s):              2.66      
+Input token throughput (tok/s):          21820.16  
+Output token throughput (tok/s):         2727.52   
+Total token throughput (tok/s):          24547.68  
+Concurrency:                             28.62     
+Mean TTFT (ms):                          4255.58   
+Median TTFT (ms):                        3184.83   
+P99 TTFT (ms):                           12995.82  
+Mean TPOT (ms):                          6.34      
+Median TPOT (ms):                        5.98      
+Mean ITL (ms):                           44.91     
+Median ITL (ms):                         30.19     
+----- run 1/2 c=32  tag=agg4-m4-low-latency-tponly-isl8192-osl1024-c32-n64-r1 -----
+Successful requests:                     64        
+Benchmark duration (s):                  16.24     
+Request throughput (req/s):              3.94      
+Input token throughput (tok/s):          32286.60  
+Output token throughput (tok/s):         4035.82   
+Total token throughput (tok/s):          36322.42  
+Concurrency:                             29.58     
+Mean TTFT (ms):                          1650.75   
+Median TTFT (ms):                        1122.94   
+P99 TTFT (ms):                           3662.55   
+Mean TPOT (ms):                          5.72      
+Median TPOT (ms):                        5.52      
+Mean ITL (ms):                           40.47     
+Median ITL (ms):                         30.11     
+----- run 2/2 c=32  tag=agg4-m4-low-latency-tponly-isl8192-osl1024-c32-n64-r2 -----
+Successful requests:                     64        
+Benchmark duration (s):                  21.59     
+Request throughput (req/s):              2.96      
+Input token throughput (tok/s):          24283.46  
+Output token throughput (tok/s):         3035.43   
+Total token throughput (tok/s):          27318.89  
+Concurrency:                             29.32     
+Mean TTFT (ms):                          3739.61   
+Median TTFT (ms):                        2355.59   
+P99 TTFT (ms):                           11791.49  
+Mean TPOT (ms):                          6.01      
+Median TPOT (ms):                        6.09      
+Mean ITL (ms):                           42.51     
+Median ITL (ms):                         30.40     
+----- warmup (DISCARDED) c=64  tag=agg4-m4-low-latency-tponly-isl8192-osl1024-c64-n128-r0 -----
+Successful requests:                     128       
+Benchmark duration (s):                  27.09     
+Request throughput (req/s):              4.72      
+Input token throughput (tok/s):          38705.21  
+Output token throughput (tok/s):         4838.15   
+Total token throughput (tok/s):          43543.37  
+Concurrency:                             56.24     
+Mean TTFT (ms):                          2478.48   
+Median TTFT (ms):                        1385.49   
+P99 TTFT (ms):                           6322.89   
+Mean TPOT (ms):                          9.21      
+Median TPOT (ms):                        9.07      
+Mean ITL (ms):                           64.07     
+Median ITL (ms):                         39.99     
+----- run 1/2 c=64  tag=agg4-m4-low-latency-tponly-isl8192-osl1024-c64-n128-r1 -----
+Successful requests:                     128       
+Benchmark duration (s):                  27.40     
+Request throughput (req/s):              4.67      
+Input token throughput (tok/s):          38273.91  
+Output token throughput (tok/s):         4784.24   
+Total token throughput (tok/s):          43058.14  
+Concurrency:                             54.82     
+Mean TTFT (ms):                          2425.32   
+Median TTFT (ms):                        1322.60   
+P99 TTFT (ms):                           6256.78   
+Mean TPOT (ms):                          9.10      
+Median TPOT (ms):                        8.89      
+Mean ITL (ms):                           63.08     
+Median ITL (ms):                         39.88     
+----- run 2/2 c=64  tag=agg4-m4-low-latency-tponly-isl8192-osl1024-c64-n128-r2 -----
+Successful requests:                     128       
+Benchmark duration (s):                  27.06     
+Request throughput (req/s):              4.73      
+Input token throughput (tok/s):          38757.13  
+Output token throughput (tok/s):         4844.64   
+Total token throughput (tok/s):          43601.77  
+Concurrency:                             55.20     
+Mean TTFT (ms):                          2428.38   
+Median TTFT (ms):                        1452.22   
+P99 TTFT (ms):                           6116.55   
+Mean TPOT (ms):                          9.03      
+Median TPOT (ms):                        8.91      
+Mean ITL (ms):                           62.63     
+Median ITL (ms):                         39.88     
+----- warmup (DISCARDED) c=128  tag=agg4-m4-low-latency-tponly-isl8192-osl1024-c128-n256-r0 -----
+Successful requests:                     256       
+Benchmark duration (s):                  41.77     
+Request throughput (req/s):              6.13      
+Input token throughput (tok/s):          50205.68  
+Output token throughput (tok/s):         6275.71   
+Total token throughput (tok/s):          56481.39  
+Concurrency:                             118.56    
+Mean TTFT (ms):                          3930.45   
+Median TTFT (ms):                        1554.01   
+P99 TTFT (ms):                           11879.28  
+Mean TPOT (ms):                          15.07     
+Median TPOT (ms):                        14.60     
+Mean ITL (ms):                           105.18    
+Median ITL (ms):                         52.65     
+----- run 1/2 c=128  tag=agg4-m4-low-latency-tponly-isl8192-osl1024-c128-n256-r1 -----
+Successful requests:                     256       
+Benchmark duration (s):                  41.42     
+Request throughput (req/s):              6.18      
+Input token throughput (tok/s):          50627.84  
+Output token throughput (tok/s):         6328.48   
+Total token throughput (tok/s):          56956.32  
+Concurrency:                             118.03    
+Mean TTFT (ms):                          3917.91   
+Median TTFT (ms):                        1718.71   
+P99 TTFT (ms):                           11504.16  
+Mean TPOT (ms):                          14.84     
+Median TPOT (ms):                        14.49     
+Mean ITL (ms):                           103.60    
+Median ITL (ms):                         52.62     
+----- run 2/2 c=128  tag=agg4-m4-low-latency-tponly-isl8192-osl1024-c128-n256-r2 -----
+Successful requests:                     256       
+Benchmark duration (s):                  41.71     
+Request throughput (req/s):              6.14      
+Input token throughput (tok/s):          50273.50  
+Output token throughput (tok/s):         6284.19   
+Total token throughput (tok/s):          56557.69  
+Concurrency:                             118.05    
+Mean TTFT (ms):                          3936.56   
+Median TTFT (ms):                        1627.41   
+P99 TTFT (ms):                           11680.66  
+Mean TPOT (ms):                          14.96     
+Median TPOT (ms):                        14.36     
+Mean ITL (ms):                           103.97    
+Median ITL (ms):                         52.60     
+
+##########  arm=agg4 a2a=v2 machines=4  (2026-09-05T03:41:46Z)  ##########
+layout  : S:B300-1 S:B300-2 S:B300-3 S:B300-4
+  gpus free: B300-1
+  gpus free: B300-2
+  gpus free: B300-3
+  gpus free: B300-4
+  launch S rank0 on B300-1  (PROFILE=low-latency MOE_A2A_BACKEND=deepep_v2 DISABLE_RADIX=1 NNODES=1 NODE_RANK=0 TP_SIZE=8 IMAGE=kimi-k3-efa-v2:nccl2312 PREFILL_CAP=8192 DECODE_CAP=512 STANDALONE_CAP=1024 MOE_RUNNER_BACKEND=deep_gemm)
+    Warning: Permanently added 'ec2-3-37-122-249.ap-northeast-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    single-node deepep_v2 mode=direct: GIN type 5 -> 3 (type 5 needs >1 node)
+    DeepEP v2: ep=8 mode=direct runner=deep_gemm cap=1024 gin=3 hca=ibp198s0f0
+    fed379ca6d52beb77944897f9e5bb86da039bbe5df6027354253dd4b55c9a017
+    launched 'kimi-k3' (profile=low-latency, dcp=1, mamba=0.86, mem=0.85)  ->  docker logs -f kimi-k3
+      a2a=deepep_v2 ep=8 mode=direct cap=1024 chunk=1024
+    health: curl -s localhost:30000/health_generate
+  launch S rank0 on B300-2  (PROFILE=low-latency MOE_A2A_BACKEND=deepep_v2 DISABLE_RADIX=1 NNODES=1 NODE_RANK=0 TP_SIZE=8 IMAGE=kimi-k3-efa-v2:nccl2312 PREFILL_CAP=8192 DECODE_CAP=512 STANDALONE_CAP=1024 MOE_RUNNER_BACKEND=deep_gemm)
+    Warning: Permanently added 'ec2-3-39-165-44.ap-northeast-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    single-node deepep_v2 mode=direct: GIN type 5 -> 3 (type 5 needs >1 node)
+    DeepEP v2: ep=8 mode=direct runner=deep_gemm cap=1024 gin=3 hca=ibp198s0f0
+    2461495af540b58020061fa531c76bd106653e9af2d0ea3949ed55112a3980c7
+    launched 'kimi-k3' (profile=low-latency, dcp=1, mamba=0.86, mem=0.85)  ->  docker logs -f kimi-k3
+      a2a=deepep_v2 ep=8 mode=direct cap=1024 chunk=1024
+    health: curl -s localhost:30000/health_generate
+  launch S rank0 on B300-3  (PROFILE=low-latency MOE_A2A_BACKEND=deepep_v2 DISABLE_RADIX=1 NNODES=1 NODE_RANK=0 TP_SIZE=8 IMAGE=kimi-k3-efa-v2:nccl2312 PREFILL_CAP=8192 DECODE_CAP=512 STANDALONE_CAP=1024 MOE_RUNNER_BACKEND=deep_gemm)
+    Warning: Permanently added 'ec2-43-202-159-82.ap-northeast-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    single-node deepep_v2 mode=direct: GIN type 5 -> 3 (type 5 needs >1 node)
+    DeepEP v2: ep=8 mode=direct runner=deep_gemm cap=1024 gin=3 hca=ibp198s0f0
+    93f39da7914741298a4d453b5bdb9b3fdb6cdfa459115294007119c34d6df78b
+    launched 'kimi-k3' (profile=low-latency, dcp=1, mamba=0.86, mem=0.85)  ->  docker logs -f kimi-k3
+      a2a=deepep_v2 ep=8 mode=direct cap=1024 chunk=1024
+    health: curl -s localhost:30000/health_generate
+  launch S rank0 on B300-4  (PROFILE=low-latency MOE_A2A_BACKEND=deepep_v2 DISABLE_RADIX=1 NNODES=1 NODE_RANK=0 TP_SIZE=8 IMAGE=kimi-k3-efa-v2:nccl2312 PREFILL_CAP=8192 DECODE_CAP=512 STANDALONE_CAP=1024 MOE_RUNNER_BACKEND=deep_gemm)
+    Warning: Permanently added 'ec2-54-116-199-54.ap-northeast-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    single-node deepep_v2 mode=direct: GIN type 5 -> 3 (type 5 needs >1 node)
+    DeepEP v2: ep=8 mode=direct runner=deep_gemm cap=1024 gin=3 hca=ibp198s0f0
+    49ede76228a33ee6d7e4ecde8836a563c017ca6551d30fb14d9ca193c0ef3131
+    launched 'kimi-k3' (profile=low-latency, dcp=1, mamba=0.86, mem=0.85)  ->  docker logs -f kimi-k3
+      a2a=deepep_v2 ep=8 mode=direct cap=1024 chunk=1024
+    health: curl -s localhost:30000/health_generate
+  ready: S#0 on B300-1 after 300s
+  ready: S#1 on B300-2 after 60s
+  ready: S#2 on B300-3 after 30s
+  ready: S#3 on B300-4 after 30s
+  verified B300-1/kimi-k3 NNODES=1
+  verified B300-1/kimi-k3 TP_SIZE=8
+  verified B300-1/kimi-k3 MOE_A2A_BACKEND=deepep_v2
+  verified B300-1/kimi-k3 EP_SIZE=8
+  verified B300-1/kimi-k3 DEEPEP_V2_MODE=direct
+  verified B300-1/kimi-k3 NCCL_GIN_TYPE=3
+  verified B300-1/kimi-k3 SGLANG_DEEPEP_V2_NUM_MAX_DISPATCH_TOKENS_PER_RANK=1024
+  note B300-1/kimi-k3 chunked_prefill_size=1024
+  note B300-1/kimi-k3 mem_fraction_static=0.85
+  note B300-1/kimi-k3 max_running_requests=48
+  verified B300-2/kimi-k3 NNODES=1
+  verified B300-2/kimi-k3 TP_SIZE=8
+  verified B300-2/kimi-k3 MOE_A2A_BACKEND=deepep_v2
+  verified B300-2/kimi-k3 EP_SIZE=8
+  verified B300-2/kimi-k3 DEEPEP_V2_MODE=direct
+  verified B300-2/kimi-k3 NCCL_GIN_TYPE=3
+  verified B300-2/kimi-k3 SGLANG_DEEPEP_V2_NUM_MAX_DISPATCH_TOKENS_PER_RANK=1024
+  note B300-2/kimi-k3 chunked_prefill_size=1024
+  note B300-2/kimi-k3 mem_fraction_static=0.85
+  note B300-2/kimi-k3 max_running_requests=48
+  verified B300-3/kimi-k3 NNODES=1
+  verified B300-3/kimi-k3 TP_SIZE=8
+  verified B300-3/kimi-k3 MOE_A2A_BACKEND=deepep_v2
+  verified B300-3/kimi-k3 EP_SIZE=8
+  verified B300-3/kimi-k3 DEEPEP_V2_MODE=direct
+  verified B300-3/kimi-k3 NCCL_GIN_TYPE=3
+  verified B300-3/kimi-k3 SGLANG_DEEPEP_V2_NUM_MAX_DISPATCH_TOKENS_PER_RANK=1024
+  note B300-3/kimi-k3 chunked_prefill_size=1024
+  note B300-3/kimi-k3 mem_fraction_static=0.85
+  note B300-3/kimi-k3 max_running_requests=48
+  verified B300-4/kimi-k3 NNODES=1
+  verified B300-4/kimi-k3 TP_SIZE=8
+  verified B300-4/kimi-k3 MOE_A2A_BACKEND=deepep_v2
+  verified B300-4/kimi-k3 EP_SIZE=8
+  verified B300-4/kimi-k3 DEEPEP_V2_MODE=direct
+  verified B300-4/kimi-k3 NCCL_GIN_TYPE=3
+  verified B300-4/kimi-k3 SGLANG_DEEPEP_V2_NUM_MAX_DISPATCH_TOKENS_PER_RANK=1024
+  note B300-4/kimi-k3 chunked_prefill_size=1024
+  note B300-4/kimi-k3 mem_fraction_static=0.85
+  note B300-4/kimi-k3 max_running_requests=48
+  router  : 4 independent workers  '172.31.17.128 172.31.29.80 172.31.26.115 172.31.26.251'
+  ready: agg router after 30s
+  conc    : 32 64 128  (8 16 32 x 4 machines)
+----- warmup (DISCARDED) c=32  tag=agg4-m4-low-latency-deepep_v2-cap1024-isl8192-osl1024-c32-n64-r0 -----
+Successful requests:                     64        
+Benchmark duration (s):                  63.22     
+Request throughput (req/s):              1.01      
+Input token throughput (tok/s):          8292.88   
+Output token throughput (tok/s):         1036.61   
+Total token throughput (tok/s):          9329.49   
+Concurrency:                             30.17     
+Mean TTFT (ms):                          7880.33   
+Median TTFT (ms):                        4914.42   
+P99 TTFT (ms):                           21664.19  
+Mean TPOT (ms):                          21.43     
+Median TPOT (ms):                        20.64     
+Mean ITL (ms):                           151.56    
+Median ITL (ms):                         57.02     
+----- run 1/2 c=32  tag=agg4-m4-low-latency-deepep_v2-cap1024-isl8192-osl1024-c32-n64-r1 -----
+Successful requests:                     64        
+Benchmark duration (s):                  63.87     
+Request throughput (req/s):              1.00      
+Input token throughput (tok/s):          8208.87   
+Output token throughput (tok/s):         1026.11   
+Total token throughput (tok/s):          9234.98   
+Concurrency:                             29.77     
+Mean TTFT (ms):                          7906.66   
+Median TTFT (ms):                        5079.95   
+P99 TTFT (ms):                           21541.44  
+Mean TPOT (ms):                          21.31     
+Median TPOT (ms):                        20.13     
+Mean ITL (ms):                           151.39    
+Median ITL (ms):                         57.10     
+----- run 2/2 c=32  tag=agg4-m4-low-latency-deepep_v2-cap1024-isl8192-osl1024-c32-n64-r2 -----
+Successful requests:                     64        
+Benchmark duration (s):                  63.02     
+Request throughput (req/s):              1.02      
+Input token throughput (tok/s):          8319.99   
+Output token throughput (tok/s):         1040.00   
+Total token throughput (tok/s):          9359.99   
+Concurrency:                             30.28     
+Mean TTFT (ms):                          8021.36   
+Median TTFT (ms):                        5214.60   
+P99 TTFT (ms):                           21736.11  
+Mean TPOT (ms):                          21.31     
+Median TPOT (ms):                        20.15     
+Mean ITL (ms):                           150.80    
+Median ITL (ms):                         57.19     
+----- warmup (DISCARDED) c=64  tag=agg4-m4-low-latency-deepep_v2-cap1024-isl8192-osl1024-c64-n128-r0 -----
+Successful requests:                     128       
+Benchmark duration (s):                  115.47    
+Request throughput (req/s):              1.11      
+Input token throughput (tok/s):          9080.64   
+Output token throughput (tok/s):         1135.08   
+Total token throughput (tok/s):          10215.72  
+Concurrency:                             58.28     
+Mean TTFT (ms):                          13553.72  
+Median TTFT (ms):                        5810.30   
+P99 TTFT (ms):                           43024.74  
+Mean TPOT (ms):                          38.14     
+Median TPOT (ms):                        37.39     
+Mean ITL (ms):                           264.71    
+Median ITL (ms):                         67.86     
+----- run 1/2 c=64  tag=agg4-m4-low-latency-deepep_v2-cap1024-isl8192-osl1024-c64-n128-r1 -----
+Successful requests:                     128       
+Benchmark duration (s):                  115.30    
+Request throughput (req/s):              1.11      
+Input token throughput (tok/s):          9094.15   
+Output token throughput (tok/s):         1136.77   
+Total token throughput (tok/s):          10230.92  
+Concurrency:                             58.38     
+Mean TTFT (ms):                          13664.99  
+Median TTFT (ms):                        5982.41   
+P99 TTFT (ms):                           43096.06  
+Mean TPOT (ms):                          38.05     
+Median TPOT (ms):                        38.00     
+Mean ITL (ms):                           264.15    
+Median ITL (ms):                         67.78     
+----- run 2/2 c=64  tag=agg4-m4-low-latency-deepep_v2-cap1024-isl8192-osl1024-c64-n128-r2 -----
+Successful requests:                     128       
+Benchmark duration (s):                  114.96    
+Request throughput (req/s):              1.11      
+Input token throughput (tok/s):          9121.43   
+Output token throughput (tok/s):         1140.18   
+Total token throughput (tok/s):          10261.60  
+Concurrency:                             58.40     
+Mean TTFT (ms):                          13329.26  
+Median TTFT (ms):                        5593.62   
+P99 TTFT (ms):                           42751.01  
+Mean TPOT (ms):                          38.24     
+Median TPOT (ms):                        37.04     
+Mean ITL (ms):                           265.02    
+Median ITL (ms):                         67.80     
+----- warmup (DISCARDED) c=128  tag=agg4-m4-low-latency-deepep_v2-cap1024-isl8192-osl1024-c128-n256-r0 -----
+Successful requests:                     256       
+Benchmark duration (s):                  205.74    
+Request throughput (req/s):              1.24      
+Input token throughput (tok/s):          10193.20  
+Output token throughput (tok/s):         1274.15   
+Total token throughput (tok/s):          11467.35  
+Concurrency:                             121.44    
+Mean TTFT (ms):                          39315.05  
+Median TTFT (ms):                        32564.45  
+P99 TTFT (ms):                           95020.33  
+Mean TPOT (ms):                          56.97     
+Median TPOT (ms):                        56.46     
+Mean ITL (ms):                           397.36    
+Median ITL (ms):                         74.99     
+----- run 1/2 c=128  tag=agg4-m4-low-latency-deepep_v2-cap1024-isl8192-osl1024-c128-n256-r1 -----
+Successful requests:                     256       
+Benchmark duration (s):                  208.60    
+Request throughput (req/s):              1.23      
+Input token throughput (tok/s):          10053.27  
+Output token throughput (tok/s):         1256.66   
+Total token throughput (tok/s):          11309.93  
+Concurrency:                             119.53    
+Mean TTFT (ms):                          38671.59  
+Median TTFT (ms):                        30862.01  
+P99 TTFT (ms):                           95647.48  
+Mean TPOT (ms):                          57.41     
+Median TPOT (ms):                        56.01     
+Mean ITL (ms):                           401.54    
+Median ITL (ms):                         75.11     
+----- run 2/2 c=128  tag=agg4-m4-low-latency-deepep_v2-cap1024-isl8192-osl1024-c128-n256-r2 -----
+Successful requests:                     256       
+Benchmark duration (s):                  207.67    
+Request throughput (req/s):              1.23      
+Input token throughput (tok/s):          10098.32  
+Output token throughput (tok/s):         1262.29   
+Total token throughput (tok/s):          11360.61  
+Concurrency:                             119.95    
+Mean TTFT (ms):                          38768.30  
+Median TTFT (ms):                        31815.56  
+P99 TTFT (ms):                           95708.05  
+Mean TPOT (ms):                          57.23     
+Median TPOT (ms):                        55.80     
+Mean ITL (ms):                           398.94    
+Median ITL (ms):                         75.21     
+
+##########  arm=pd2p2d a2a=v2 machines=4  (2026-09-05T04:21:27Z)  ##########
+layout  : P:B300-1 P:B300-2 D:B300-3 D:B300-4
+  gpus free: B300-1
+  gpus free: B300-2
+  gpus free: B300-3
+  gpus free: B300-4
+  launch P rank0 on B300-1  (PROFILE=low-latency MOE_A2A_BACKEND=deepep_v2 DISABLE_RADIX=1 NNODES=1 NODE_RANK=0 TP_SIZE=8 IMAGE=kimi-k3-efa-v2:nccl2312 PREFILL_CAP=8192 DECODE_CAP=512 STANDALONE_CAP=1024 MOE_RUNNER_BACKEND=deep_gemm)
+    Warning: Permanently added 'ec2-3-37-122-249.ap-northeast-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    single-node deepep_v2 mode=direct: GIN type 5 -> 3 (type 5 needs >1 node)
+    DeepEP v2: ep=8 mode=direct runner=deep_gemm cap=8192 gin=3 hca=ibp198s0f0
+    4864b3173ab0c46fb7f431c5d05136ea856416c6a44c26214a8512ae4aac2bc4
+    launched 'kimi-k3-prefill' (profile=low-latency, mem=0.85, dcp=1, mamba=0.86, backend=mooncake)  ->  docker logs -f kimi-k3-prefill
+      a2a=deepep_v2 ep=8 mode=direct cap=8192 chunk=8192 decode-graphs=OFF
+  launch P rank0 on B300-2  (PROFILE=low-latency MOE_A2A_BACKEND=deepep_v2 DISABLE_RADIX=1 NNODES=1 NODE_RANK=0 TP_SIZE=8 IMAGE=kimi-k3-efa-v2:nccl2312 PREFILL_CAP=8192 DECODE_CAP=512 STANDALONE_CAP=1024 MOE_RUNNER_BACKEND=deep_gemm)
+    Warning: Permanently added 'ec2-3-39-165-44.ap-northeast-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    single-node deepep_v2 mode=direct: GIN type 5 -> 3 (type 5 needs >1 node)
+    DeepEP v2: ep=8 mode=direct runner=deep_gemm cap=8192 gin=3 hca=ibp198s0f0
+    0c571656e00b972314e1ffb7ad692247fce81b4d52bb44783754acc3b6ea3eef
+    launched 'kimi-k3-prefill' (profile=low-latency, mem=0.85, dcp=1, mamba=0.86, backend=mooncake)  ->  docker logs -f kimi-k3-prefill
+      a2a=deepep_v2 ep=8 mode=direct cap=8192 chunk=8192 decode-graphs=OFF
+  launch D rank0 on B300-3  (PROFILE=low-latency MOE_A2A_BACKEND=deepep_v2 DISABLE_RADIX=1 NNODES=1 NODE_RANK=0 TP_SIZE=8 IMAGE=kimi-k3-efa-v2:nccl2312 PREFILL_CAP=8192 DECODE_CAP=512 STANDALONE_CAP=1024 MOE_RUNNER_BACKEND=deep_gemm)
+    Warning: Permanently added 'ec2-43-202-159-82.ap-northeast-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    single-node deepep_v2 mode=direct: GIN type 5 -> 3 (type 5 needs >1 node)
+    DeepEP v2: ep=8 mode=direct runner=deep_gemm cap=512 gin=3 hca=ibp198s0f0
+    cd2de2d475c0c723ff94f5f0f65baf981c3169c081cee0547eb9cbd92c298852
+    launched 'kimi-k3-decode' (profile=low-latency, mem=0.85, dcp=1, mamba=0.17, symm=on)  ->  docker logs -f kimi-k3-decode
+      a2a=deepep_v2 ep=8 mode=direct cap=512 chunk=512 decode-graphs=ON max-bs=<sglang default> max-run=<DSPARK 48>
+  launch D rank0 on B300-4  (PROFILE=low-latency MOE_A2A_BACKEND=deepep_v2 DISABLE_RADIX=1 NNODES=1 NODE_RANK=0 TP_SIZE=8 IMAGE=kimi-k3-efa-v2:nccl2312 PREFILL_CAP=8192 DECODE_CAP=512 STANDALONE_CAP=1024 MOE_RUNNER_BACKEND=deep_gemm)
+    Warning: Permanently added 'ec2-54-116-199-54.ap-northeast-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    single-node deepep_v2 mode=direct: GIN type 5 -> 3 (type 5 needs >1 node)
+    DeepEP v2: ep=8 mode=direct runner=deep_gemm cap=512 gin=3 hca=ibp198s0f0
+    1c813bccb3d4c1b16fa1eb905582e9aa2c7f0a0e792307d883cd5153e5d91a18
+    launched 'kimi-k3-decode' (profile=low-latency, mem=0.85, dcp=1, mamba=0.17, symm=on)  ->  docker logs -f kimi-k3-decode
+      a2a=deepep_v2 ep=8 mode=direct cap=512 chunk=512 decode-graphs=ON max-bs=<sglang default> max-run=<DSPARK 48>
+  ready: P#0 on B300-1 after 780s
+  ready: P#1 on B300-2 after 30s
+  ready: D#2 on B300-3 after 30s
+  ready: D#3 on B300-4 after 30s
+  verified B300-1/kimi-k3-prefill NNODES=1
+  verified B300-1/kimi-k3-prefill TP_SIZE=8
+  verified B300-1/kimi-k3-prefill MOE_A2A_BACKEND=deepep_v2
+  verified B300-1/kimi-k3-prefill EP_SIZE=8
+  verified B300-1/kimi-k3-prefill DEEPEP_V2_MODE=direct
+  verified B300-1/kimi-k3-prefill NCCL_GIN_TYPE=3
+  verified B300-1/kimi-k3-prefill SGLANG_DEEPEP_V2_NUM_MAX_DISPATCH_TOKENS_PER_RANK=8192
+  note B300-1/kimi-k3-prefill chunked_prefill_size=8192
+  note B300-1/kimi-k3-prefill mem_fraction_static=0.92
+  note B300-1/kimi-k3-prefill max_running_requests=48
+  verified B300-2/kimi-k3-prefill NNODES=1
+  verified B300-2/kimi-k3-prefill TP_SIZE=8
+  verified B300-2/kimi-k3-prefill MOE_A2A_BACKEND=deepep_v2
+  verified B300-2/kimi-k3-prefill EP_SIZE=8
+  verified B300-2/kimi-k3-prefill DEEPEP_V2_MODE=direct
+  verified B300-2/kimi-k3-prefill NCCL_GIN_TYPE=3
+  verified B300-2/kimi-k3-prefill SGLANG_DEEPEP_V2_NUM_MAX_DISPATCH_TOKENS_PER_RANK=8192
+  note B300-2/kimi-k3-prefill chunked_prefill_size=8192
+  note B300-2/kimi-k3-prefill mem_fraction_static=0.92
+  note B300-2/kimi-k3-prefill max_running_requests=48
+  verified B300-3/kimi-k3-decode NNODES=1
+  verified B300-3/kimi-k3-decode TP_SIZE=8
+  verified B300-3/kimi-k3-decode MOE_A2A_BACKEND=deepep_v2
+  verified B300-3/kimi-k3-decode EP_SIZE=8
+  verified B300-3/kimi-k3-decode DEEPEP_V2_MODE=direct
+  verified B300-3/kimi-k3-decode NCCL_GIN_TYPE=3
+  verified B300-3/kimi-k3-decode SGLANG_DEEPEP_V2_NUM_MAX_DISPATCH_TOKENS_PER_RANK=512
+  note B300-3/kimi-k3-decode chunked_prefill_size=512
+  note B300-3/kimi-k3-decode mem_fraction_static=0.85
+  note B300-3/kimi-k3-decode max_running_requests=48
+  verified B300-4/kimi-k3-decode NNODES=1
+  verified B300-4/kimi-k3-decode TP_SIZE=8
+  verified B300-4/kimi-k3-decode MOE_A2A_BACKEND=deepep_v2
+  verified B300-4/kimi-k3-decode EP_SIZE=8
+  verified B300-4/kimi-k3-decode DEEPEP_V2_MODE=direct
+  verified B300-4/kimi-k3-decode NCCL_GIN_TYPE=3
+  verified B300-4/kimi-k3-decode SGLANG_DEEPEP_V2_NUM_MAX_DISPATCH_TOKENS_PER_RANK=512
+  note B300-4/kimi-k3-decode chunked_prefill_size=512
+  note B300-4/kimi-k3-decode mem_fraction_static=0.85
+  note B300-4/kimi-k3-decode max_running_requests=48
+  router  : 2P2D  prefill='172.31.17.128 172.31.29.80' decode='172.31.26.115 172.31.26.251'
+  ready: pd router after 30s
+  conc    : 32 64 128  (8 16 32 x 4 machines)
+----- warmup (DISCARDED) c=32  tag=pd2p2d-m4-low-latency-deepep_v2-p8192d512-isl8192-osl1024-c32-n64-r0 -----
+Successful requests:                     64        
+Benchmark duration (s):                  30.13     
+Request throughput (req/s):              2.12      
+Input token throughput (tok/s):          17401.26  
+Output token throughput (tok/s):         2175.16   
+Total token throughput (tok/s):          19576.41  
+Concurrency:                             28.93     
+Mean TTFT (ms):                          5593.71   
+Median TTFT (ms):                        6438.22   
+P99 TTFT (ms):                           12758.91  
+Mean TPOT (ms):                          7.85      
+Median TPOT (ms):                        7.71      
+Mean ITL (ms):                           55.49     
+Median ITL (ms):                         60.12     
+----- run 1/2 c=32  tag=pd2p2d-m4-low-latency-deepep_v2-p8192d512-isl8192-osl1024-c32-n64-r1 -----
+Successful requests:                     64        
+Benchmark duration (s):                  24.14     
+Request throughput (req/s):              2.65      
+Input token throughput (tok/s):          21722.03  
+Output token throughput (tok/s):         2715.25   
+Total token throughput (tok/s):          24437.28  
+Concurrency:                             28.35     
+Mean TTFT (ms):                          2516.31   
+Median TTFT (ms):                        1775.50   
+P99 TTFT (ms):                           6201.12   
+Mean TPOT (ms):                          7.99      
+Median TPOT (ms):                        7.62      
+Mean ITL (ms):                           56.69     
+Median ITL (ms):                         60.27     
+----- run 2/2 c=32  tag=pd2p2d-m4-low-latency-deepep_v2-p8192d512-isl8192-osl1024-c32-n64-r2 -----
+Successful requests:                     64        
+Benchmark duration (s):                  23.95     
+Request throughput (req/s):              2.67      
+Input token throughput (tok/s):          21890.21  
+Output token throughput (tok/s):         2736.28   
+Total token throughput (tok/s):          24626.48  
+Concurrency:                             28.52     
+Mean TTFT (ms):                          2450.23   
+Median TTFT (ms):                        1489.65   
+P99 TTFT (ms):                           6270.56   
+Mean TPOT (ms):                          8.04      
+Median TPOT (ms):                        7.74      
+Mean ITL (ms):                           56.97     
+Median ITL (ms):                         59.89     
+----- warmup (DISCARDED) c=64  tag=pd2p2d-m4-low-latency-deepep_v2-p8192d512-isl8192-osl1024-c64-n128-r0 -----
+Successful requests:                     128       
+Benchmark duration (s):                  37.40     
+Request throughput (req/s):              3.42      
+Input token throughput (tok/s):          28040.51  
+Output token throughput (tok/s):         3505.06   
+Total token throughput (tok/s):          31545.57  
+Concurrency:                             49.82     
+Mean TTFT (ms):                          4985.50   
+Median TTFT (ms):                        3675.00   
+P99 TTFT (ms):                           12648.97  
+Mean TPOT (ms):                          9.35      
+Median TPOT (ms):                        8.92      
+Mean ITL (ms):                           64.91     
+Median ITL (ms):                         68.27     
+----- run 1/2 c=64  tag=pd2p2d-m4-low-latency-deepep_v2-p8192d512-isl8192-osl1024-c64-n128-r1 -----
+Successful requests:                     128       
+Benchmark duration (s):                  37.87     
+Request throughput (req/s):              3.38      
+Input token throughput (tok/s):          27685.35  
+Output token throughput (tok/s):         3460.67   
+Total token throughput (tok/s):          31146.02  
+Concurrency:                             49.39     
+Mean TTFT (ms):                          5061.90   
+Median TTFT (ms):                        3918.54   
+P99 TTFT (ms):                           12707.73  
+Mean TPOT (ms):                          9.34      
+Median TPOT (ms):                        8.92      
+Mean ITL (ms):                           64.77     
+Median ITL (ms):                         68.38     
+----- run 2/2 c=64  tag=pd2p2d-m4-low-latency-deepep_v2-p8192d512-isl8192-osl1024-c64-n128-r2 -----
+Successful requests:                     128       
+Benchmark duration (s):                  37.46     
+Request throughput (req/s):              3.42      
+Input token throughput (tok/s):          27988.85  
+Output token throughput (tok/s):         3498.61   
+Total token throughput (tok/s):          31487.46  
+Concurrency:                             50.27     
+Mean TTFT (ms):                          5189.42   
+Median TTFT (ms):                        3799.99   
+P99 TTFT (ms):                           12894.25  
+Mean TPOT (ms):                          9.31      
+Median TPOT (ms):                        8.87      
+Mean ITL (ms):                           64.52     
+Median ITL (ms):                         67.98     
+----- warmup (DISCARDED) c=128  tag=pd2p2d-m4-low-latency-deepep_v2-p8192d512-isl8192-osl1024-c128-n256-r0 -----
+Successful requests:                     256       
+Benchmark duration (s):                  63.16     
+Request throughput (req/s):              4.05      
+Input token throughput (tok/s):          33202.34  
+Output token throughput (tok/s):         4150.29   
+Total token throughput (tok/s):          37352.63  
+Concurrency:                             99.04     
+Mean TTFT (ms):                          14716.10  
+Median TTFT (ms):                        16135.23  
+P99 TTFT (ms):                           25386.40  
+Mean TPOT (ms):                          9.50      
+Median TPOT (ms):                        9.06      
+Mean ITL (ms):                           66.44     
+Median ITL (ms):                         68.95     
+----- run 1/2 c=128  tag=pd2p2d-m4-low-latency-deepep_v2-p8192d512-isl8192-osl1024-c128-n256-r1 -----
+Successful requests:                     256       
+Benchmark duration (s):                  63.20     
+Request throughput (req/s):              4.05      
+Input token throughput (tok/s):          33180.56  
+Output token throughput (tok/s):         4147.57   
+Total token throughput (tok/s):          37328.13  
+Concurrency:                             99.43     
+Mean TTFT (ms):                          14786.80  
+Median TTFT (ms):                        16060.64  
+P99 TTFT (ms):                           25646.21  
+Mean TPOT (ms):                          9.54      
+Median TPOT (ms):                        9.10      
+Mean ITL (ms):                           66.67     
+Median ITL (ms):                         69.44     
+----- run 2/2 c=128  tag=pd2p2d-m4-low-latency-deepep_v2-p8192d512-isl8192-osl1024-c128-n256-r2 -----
+Successful requests:                     256       
+Benchmark duration (s):                  62.31     
+Request throughput (req/s):              4.11      
+Input token throughput (tok/s):          33654.96  
+Output token throughput (tok/s):         4206.87   
+Total token throughput (tok/s):          37861.84  
+Concurrency:                             100.86    
+Mean TTFT (ms):                          14808.53  
+Median TTFT (ms):                        15967.21  
+P99 TTFT (ms):                           25388.42  
+Mean TPOT (ms):                          9.52      
+Median TPOT (ms):                        9.08      
+Mean ITL (ms):                           66.63     
+Median ITL (ms):                         69.31     
+
+##########  arm=pd2x2 a2a=v2 machines=4  (2026-09-05T04:56:57Z)  ##########
+layout  : P:B300-1+B300-2 D:B300-3+B300-4
+  gpus free: B300-1
+  gpus free: B300-2
+  gpus free: B300-3
+  gpus free: B300-4
+  launch P rank0 on B300-1  (PROFILE=low-latency MOE_A2A_BACKEND=deepep_v2 DISABLE_RADIX=1 NNODES=2 NODE_RANK=0 TP_SIZE=16 DIST_INIT_ADDR=172.31.17.128 IMAGE=kimi-k3-efa-v2:nccl2312 PREFILL_CAP=8192 DECODE_CAP=512 STANDALONE_CAP=1024 MOE_RUNNER_BACKEND=deep_gemm)
+    Warning: Permanently added 'ec2-3-37-122-249.ap-northeast-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    NNODES=2: deepep_v2 mode direct -> hybrid (direct is intra-node only)
+    NNODES=2: custom all-reduce off (it is an intra-node P2P path)
+    NNODES=2: STANDALONE_MEM_FRACTION 0.85 -> 0.78 (TP=16 has a bigger KV pool)
+    NNODES=2: PREFILL_MEM_FRACTION 0.85 -> 0.78 (TP=16 has a bigger KV pool)
+    NNODES=2: DECODE_MEM_FRACTION 0.85 -> 0.78 (TP=16 has a bigger KV pool)
+    DeepEP v2: ep=16 mode=hybrid runner=deep_gemm cap=8192 gin=5 hca=rdmap
+    383f7deab35da38e5a6f92cdaedfd99f159d7563050a6a3f4a12957a73da35e0
+    launched 'kimi-k3-prefill' (profile=low-latency, mem=0.78, dcp=1, mamba=0.86, backend=mooncake)  ->  docker logs -f kimi-k3-prefill
+      a2a=deepep_v2 ep=16 mode=hybrid cap=8192 chunk=8192 decode-graphs=OFF
+      tp=16 over 2 nodes, this host is node-rank 0, rendezvous 172.31.17.128:29500
+      (rank != 0 never binds :30000 -- do not wait for 'server is fired up' there)
+  launch P rank1 on B300-2  (PROFILE=low-latency MOE_A2A_BACKEND=deepep_v2 DISABLE_RADIX=1 NNODES=2 NODE_RANK=1 TP_SIZE=16 DIST_INIT_ADDR=172.31.17.128 IMAGE=kimi-k3-efa-v2:nccl2312 PREFILL_CAP=8192 DECODE_CAP=512 STANDALONE_CAP=1024 MOE_RUNNER_BACKEND=deep_gemm)
+    Warning: Permanently added 'ec2-3-39-165-44.ap-northeast-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    NNODES=2: deepep_v2 mode direct -> hybrid (direct is intra-node only)
+    NNODES=2: custom all-reduce off (it is an intra-node P2P path)
+    NNODES=2: STANDALONE_MEM_FRACTION 0.85 -> 0.78 (TP=16 has a bigger KV pool)
+    NNODES=2: PREFILL_MEM_FRACTION 0.85 -> 0.78 (TP=16 has a bigger KV pool)
+    NNODES=2: DECODE_MEM_FRACTION 0.85 -> 0.78 (TP=16 has a bigger KV pool)
+    DeepEP v2: ep=16 mode=hybrid runner=deep_gemm cap=8192 gin=5 hca=rdmap
+    380bcae49112f622ce2d0d1aecbba90e098a0f51b36fd90f11578b3bf3de7276
+    launched 'kimi-k3-prefill' (profile=low-latency, mem=0.78, dcp=1, mamba=0.86, backend=mooncake)  ->  docker logs -f kimi-k3-prefill
+      a2a=deepep_v2 ep=16 mode=hybrid cap=8192 chunk=8192 decode-graphs=OFF
+      tp=16 over 2 nodes, this host is node-rank 1, rendezvous 172.31.17.128:29500
+      (rank != 0 never binds :30000 -- do not wait for 'server is fired up' there)
+  launch D rank0 on B300-3  (PROFILE=low-latency MOE_A2A_BACKEND=deepep_v2 DISABLE_RADIX=1 NNODES=2 NODE_RANK=0 TP_SIZE=16 DIST_INIT_ADDR=172.31.26.115 IMAGE=kimi-k3-efa-v2:nccl2312 PREFILL_CAP=8192 DECODE_CAP=512 STANDALONE_CAP=1024 MOE_RUNNER_BACKEND=deep_gemm)
+    Warning: Permanently added 'ec2-43-202-159-82.ap-northeast-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    NNODES=2: deepep_v2 mode direct -> hybrid (direct is intra-node only)
+    NNODES=2: custom all-reduce off (it is an intra-node P2P path)
+    NNODES=2: STANDALONE_MEM_FRACTION 0.85 -> 0.78 (TP=16 has a bigger KV pool)
+    NNODES=2: PREFILL_MEM_FRACTION 0.85 -> 0.78 (TP=16 has a bigger KV pool)
+    NNODES=2: DECODE_MEM_FRACTION 0.85 -> 0.78 (TP=16 has a bigger KV pool)
+    DeepEP v2: ep=16 mode=hybrid runner=deep_gemm cap=512 gin=5 hca=rdmap
+    6afa7e51d7dacf886ae194cf4ba5155f7d546f2655611f7d62c64f924cea6447
+    launched 'kimi-k3-decode' (profile=low-latency, mem=0.78, dcp=1, mamba=0.17, symm=on)  ->  docker logs -f kimi-k3-decode
+      a2a=deepep_v2 ep=16 mode=hybrid cap=512 chunk=512 decode-graphs=ON max-bs=<sglang default> max-run=<DSPARK 48>
+      tp=16 over 2 nodes, this host is node-rank 0, rendezvous 172.31.26.115:29500
+      (rank != 0 never binds :30000 -- do not wait for 'server is fired up' there)
+  launch D rank1 on B300-4  (PROFILE=low-latency MOE_A2A_BACKEND=deepep_v2 DISABLE_RADIX=1 NNODES=2 NODE_RANK=1 TP_SIZE=16 DIST_INIT_ADDR=172.31.26.115 IMAGE=kimi-k3-efa-v2:nccl2312 PREFILL_CAP=8192 DECODE_CAP=512 STANDALONE_CAP=1024 MOE_RUNNER_BACKEND=deep_gemm)
+    Warning: Permanently added 'ec2-54-116-199-54.ap-northeast-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    NNODES=2: deepep_v2 mode direct -> hybrid (direct is intra-node only)
+    NNODES=2: custom all-reduce off (it is an intra-node P2P path)
+    NNODES=2: STANDALONE_MEM_FRACTION 0.85 -> 0.78 (TP=16 has a bigger KV pool)
+    NNODES=2: PREFILL_MEM_FRACTION 0.85 -> 0.78 (TP=16 has a bigger KV pool)
+    NNODES=2: DECODE_MEM_FRACTION 0.85 -> 0.78 (TP=16 has a bigger KV pool)
+    DeepEP v2: ep=16 mode=hybrid runner=deep_gemm cap=512 gin=5 hca=rdmap
+    89a86cdfeddeee52133f9afde57a0f22f510005ad11ba5e664bbf3499a731116
+    launched 'kimi-k3-decode' (profile=low-latency, mem=0.78, dcp=1, mamba=0.17, symm=on)  ->  docker logs -f kimi-k3-decode
+      a2a=deepep_v2 ep=16 mode=hybrid cap=512 chunk=512 decode-graphs=ON max-bs=<sglang default> max-run=<DSPARK 48>
+      tp=16 over 2 nodes, this host is node-rank 1, rendezvous 172.31.26.115:29500
+      (rank != 0 never binds :30000 -- do not wait for 'server is fired up' there)
+  ready: P#0 on B300-1 after 270s
+  ready: D#1 on B300-3 after 90s
+  verified B300-1/kimi-k3-prefill NNODES=2
+  verified B300-1/kimi-k3-prefill TP_SIZE=16
+  verified B300-1/kimi-k3-prefill MOE_A2A_BACKEND=deepep_v2
+  verified B300-1/kimi-k3-prefill EP_SIZE=16
+  verified B300-1/kimi-k3-prefill DEEPEP_V2_MODE=hybrid
+  verified B300-1/kimi-k3-prefill NCCL_GIN_TYPE=5
+  verified B300-1/kimi-k3-prefill SGLANG_DEEPEP_V2_NUM_MAX_DISPATCH_TOKENS_PER_RANK=8192
+  verified B300-2/kimi-k3-prefill NNODES=2
+  verified B300-2/kimi-k3-prefill TP_SIZE=16
+  verified B300-2/kimi-k3-prefill MOE_A2A_BACKEND=deepep_v2
+  verified B300-2/kimi-k3-prefill EP_SIZE=16
+  verified B300-2/kimi-k3-prefill DEEPEP_V2_MODE=hybrid
+  verified B300-2/kimi-k3-prefill NCCL_GIN_TYPE=5
+  verified B300-2/kimi-k3-prefill SGLANG_DEEPEP_V2_NUM_MAX_DISPATCH_TOKENS_PER_RANK=8192
+  note B300-1/kimi-k3-prefill chunked_prefill_size=8192
+  note B300-1/kimi-k3-prefill mem_fraction_static=0.78
+  note B300-1/kimi-k3-prefill max_running_requests=48
+  verified B300-3/kimi-k3-decode NNODES=2
+  verified B300-3/kimi-k3-decode TP_SIZE=16
+  verified B300-3/kimi-k3-decode MOE_A2A_BACKEND=deepep_v2
+  verified B300-3/kimi-k3-decode EP_SIZE=16
+  verified B300-3/kimi-k3-decode DEEPEP_V2_MODE=hybrid
+  verified B300-3/kimi-k3-decode NCCL_GIN_TYPE=5
+  verified B300-3/kimi-k3-decode SGLANG_DEEPEP_V2_NUM_MAX_DISPATCH_TOKENS_PER_RANK=512
+  verified B300-4/kimi-k3-decode NNODES=2
+  verified B300-4/kimi-k3-decode TP_SIZE=16
+  verified B300-4/kimi-k3-decode MOE_A2A_BACKEND=deepep_v2
+  verified B300-4/kimi-k3-decode EP_SIZE=16
+  verified B300-4/kimi-k3-decode DEEPEP_V2_MODE=hybrid
+  verified B300-4/kimi-k3-decode NCCL_GIN_TYPE=5
+  verified B300-4/kimi-k3-decode SGLANG_DEEPEP_V2_NUM_MAX_DISPATCH_TOKENS_PER_RANK=512
+  note B300-3/kimi-k3-decode chunked_prefill_size=512
+  note B300-3/kimi-k3-decode mem_fraction_static=0.78
+  note B300-3/kimi-k3-decode max_running_requests=48
+  router  : 1P1D  prefill='172.31.17.128' decode='172.31.26.115'
+  ready: pd router after 30s
+  conc    : 32 64 128  (8 16 32 x 4 machines)
+----- warmup (DISCARDED) c=32  tag=pd2x2-m4-low-latency-deepep_v2-p8192d512-isl8192-osl1024-c32-n64-r0 -----
+Successful requests:                     64        
+Benchmark duration (s):                  44.54     
+Request throughput (req/s):              1.44      
+Input token throughput (tok/s):          11772.47  
+Output token throughput (tok/s):         1471.56   
+Total token throughput (tok/s):          13244.03  
+Concurrency:                             27.34     
+Mean TTFT (ms):                          4381.82   
+Median TTFT (ms):                        1736.87   
+P99 TTFT (ms):                           13201.64  
+Mean TPOT (ms):                          14.31     
+Median TPOT (ms):                        13.69     
+Mean ITL (ms):                           100.87    
+Median ITL (ms):                         104.15    
+----- run 1/2 c=32  tag=pd2x2-m4-low-latency-deepep_v2-p8192d512-isl8192-osl1024-c32-n64-r1 -----
+Successful requests:                     64        
+Benchmark duration (s):                  43.63     
+Request throughput (req/s):              1.47      
+Input token throughput (tok/s):          12017.72  
+Output token throughput (tok/s):         1502.21   
+Total token throughput (tok/s):          13519.93  
+Concurrency:                             27.59     
+Mean TTFT (ms):                          4266.85   
+Median TTFT (ms):                        1960.26   
+P99 TTFT (ms):                           12796.16  
+Mean TPOT (ms):                          14.21     
+Median TPOT (ms):                        13.56     
+Mean ITL (ms):                           100.59    
+Median ITL (ms):                         103.92    
+----- run 2/2 c=32  tag=pd2x2-m4-low-latency-deepep_v2-p8192d512-isl8192-osl1024-c32-n64-r2 -----
+Successful requests:                     64        
+Benchmark duration (s):                  44.22     
+Request throughput (req/s):              1.45      
+Input token throughput (tok/s):          11857.00  
+Output token throughput (tok/s):         1482.12   
+Total token throughput (tok/s):          13339.12  
+Concurrency:                             27.34     
+Mean TTFT (ms):                          4281.66   
+Median TTFT (ms):                        1726.75   
+P99 TTFT (ms):                           13054.67  
+Mean TPOT (ms):                          14.28     
+Median TPOT (ms):                        13.62     
+Mean ITL (ms):                           100.84    
+Median ITL (ms):                         104.02    
+----- warmup (DISCARDED) c=64  tag=pd2x2-m4-low-latency-deepep_v2-p8192d512-isl8192-osl1024-c64-n128-r0 -----
+Successful requests:                     128       
+Benchmark duration (s):                  69.88     
+Request throughput (req/s):              1.83      
+Input token throughput (tok/s):          15005.83  
+Output token throughput (tok/s):         1875.73   
+Total token throughput (tok/s):          16881.56  
+Concurrency:                             50.72     
+Mean TTFT (ms):                          11781.94  
+Median TTFT (ms):                        10244.09  
+P99 TTFT (ms):                           25422.38  
+Mean TPOT (ms):                          15.55     
+Median TPOT (ms):                        14.59     
+Mean ITL (ms):                           108.27    
+Median ITL (ms):                         111.46    
+----- run 1/2 c=64  tag=pd2x2-m4-low-latency-deepep_v2-p8192d512-isl8192-osl1024-c64-n128-r1 -----
+Successful requests:                     128       
+Benchmark duration (s):                  69.83     
+Request throughput (req/s):              1.83      
+Input token throughput (tok/s):          15016.10  
+Output token throughput (tok/s):         1877.01   
+Total token throughput (tok/s):          16893.12  
+Concurrency:                             50.25     
+Mean TTFT (ms):                          11527.53  
+Median TTFT (ms):                        9980.12   
+P99 TTFT (ms):                           25390.42  
+Mean TPOT (ms):                          15.53     
+Median TPOT (ms):                        14.54     
+Mean ITL (ms):                           108.00    
+Median ITL (ms):                         111.46    
+----- run 2/2 c=64  tag=pd2x2-m4-low-latency-deepep_v2-p8192d512-isl8192-osl1024-c64-n128-r2 -----
+Successful requests:                     128       
+Benchmark duration (s):                  69.61     
+Request throughput (req/s):              1.84      
+Input token throughput (tok/s):          15062.69  
+Output token throughput (tok/s):         1882.84   
+Total token throughput (tok/s):          16945.53  
+Concurrency:                             50.29     
+Mean TTFT (ms):                          11438.76  
+Median TTFT (ms):                        9780.32   
+P99 TTFT (ms):                           25334.21  
+Mean TPOT (ms):                          15.55     
+Median TPOT (ms):                        14.63     
+Mean ITL (ms):                           108.04    
+Median ITL (ms):                         111.45    
+----- warmup (DISCARDED) c=128  tag=pd2x2-m4-low-latency-deepep_v2-p8192d512-isl8192-osl1024-c128-n256-r0 -----
+Successful requests:                     256       
+Benchmark duration (s):                  119.01    
+Request throughput (req/s):              2.15      
+Input token throughput (tok/s):          17621.47  
+Output token throughput (tok/s):         2202.68   
+Total token throughput (tok/s):          19824.15  
+Concurrency:                             100.39    
+Mean TTFT (ms):                          30606.00  
+Median TTFT (ms):                        33738.87  
+P99 TTFT (ms):                           50814.11  
+Mean TPOT (ms):                          15.70     
+Median TPOT (ms):                        14.85     
+Mean ITL (ms):                           109.84    
+Median ITL (ms):                         112.67    
+----- run 1/2 c=128  tag=pd2x2-m4-low-latency-deepep_v2-p8192d512-isl8192-osl1024-c128-n256-r1 -----
+Successful requests:                     256       
+Benchmark duration (s):                  120.15    
+Request throughput (req/s):              2.13      
+Input token throughput (tok/s):          17454.26  
+Output token throughput (tok/s):         2181.78   
+Total token throughput (tok/s):          19636.04  
+Concurrency:                             100.00    
+Mean TTFT (ms):                          30911.49  
+Median TTFT (ms):                        34418.57  
+P99 TTFT (ms):                           51066.63  
+Mean TPOT (ms):                          15.66     
+Median TPOT (ms):                        14.85     
+Mean ITL (ms):                           109.62    
+Median ITL (ms):                         112.51    
+----- run 2/2 c=128  tag=pd2x2-m4-low-latency-deepep_v2-p8192d512-isl8192-osl1024-c128-n256-r2 -----
+Successful requests:                     256       
+Benchmark duration (s):                  119.83    
+Request throughput (req/s):              2.14      
+Input token throughput (tok/s):          17500.79  
+Output token throughput (tok/s):         2187.60   
+Total token throughput (tok/s):          19688.39  
+Concurrency:                             99.83     
+Mean TTFT (ms):                          30695.28  
+Median TTFT (ms):                        33764.79  
+P99 TTFT (ms):                           51021.90  
+Mean TPOT (ms):                          15.68     
+Median TPOT (ms):                        14.76     
+Mean ITL (ms):                           109.59    
+Median ITL (ms):                         112.46    
+
+tearing down every container on B300-1 B300-2 B300-3 B300-4
+
+finished: 2026-09-05T05:30:36Z
+raw logs live on the hosts under /home/ubuntu/kimi-k3-sglang/results/ -- 'bash sync.sh pull' to fetch,
+then 'python3 gen_matched_table.py results' for the per-machine comparison.
