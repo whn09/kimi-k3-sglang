@@ -1,0 +1,7 @@
+=== gate: all 4 hosts free (1/5) 2026-09-05T10:07:46Z
+=== gate: all 4 hosts free (2/5) 2026-09-05T10:10:04Z
+=== gate: all 4 hosts free (3/5) 2026-09-05T10:12:24Z
+=== gate: all 4 hosts free (4/5) 2026-09-05T10:14:43Z
+=== gate: all 4 hosts free (5/5) 2026-09-05T10:17:01Z
+=== gate: OPEN 2026-09-05T10:17:01Z
+=== stage E START  (MACHINE_BUDGET=2 STANDALONE_CAP=8192 ARMS=pd1p1d:tp agg2:v2) 2026-09-05T10:17:01Z

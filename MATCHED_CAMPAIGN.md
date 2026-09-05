@@ -75,6 +75,36 @@ block's number and its reasoning, not the original.
 - **`agg4:tp` at c=32 in the decode stage:** 13.8% replicate spread. With
   `ppc=2` that bench is only ~2 waves. Judge that arm at c=64 / c=128.
 
+## Stage E, 2026-09-05: one arm survived, the hosts did not
+
+`95_matched_followup.sh` launched at 10:17Z. `pd1p1d:tp` completed all 9 runs.
+`agg2:v2 @ STANDALONE_CAP=8192` **launched successfully** -- `cap=8192
+chunk=8192` on both boxes, no OOM, so the capture pool does fit at 8192 -- and
+then all four B300 were terminated (`StateTransitionReason: User initiated`)
+before a single bench ran. `agg2x2node:v2` never started.
+
+The bench JSONs live on the hosts until `sync.sh pull`, so `pd1p1d:tp`'s JSONs
+died with them. `salvage_log_json.py results/campaign2.E.log results` rebuilds
+them from the driver log, which prints each block under its full tag -- the same
+string as the JSON stem. Those rows are marked **SALVAGED** in the inventory:
+real measurements, but not re-pullable and not re-checkable.
+
+**`pd1p1d:tp` answers Q1: PD separation itself costs 13-18% of throughput, and
+buys a 2.6x better TPOT.** Against `agg2:tp` its out tok/s ratio is
+0.869 / 0.867 / 0.817 at c=16/32/64. The decomposition against the published
+`pd1p1d:v2` is exact -- 0.817 x 0.855 = 0.698, and likewise at the other two
+loads -- so of the 0.698 that `pd1p1d:v2` scores, **PD owns -18% and DeepEP v2
+owns -15%**. PD's implementation is not the problem.
+
+It also gives the cleanest v2-decode number in the campaign, because only the
+MoE backend changes: same PD shape, same `cap=512 chunk=512` decode role, same
+mem 0.92/0.85, same ep=8. Median TPOT `pd1p1d:tp` 4.7/5.1/5.6 ms vs
+`pd1p1d:v2` 7.6/9.0/9.1 ms => v2 is **1.6-1.76x slower per token**, inverse
+0.57-0.62, independently consistent with the per-box block's 0.629/0.649/0.665.
+
+Still open after the termination: Q2 (`agg2:v2` at a matched chunk, and its
+2-machine counterpart) and the aggregated cross-node row.
+
 ## Not measured -- do not infer these
 
 `95_matched_followup.sh` runs exactly these three arms. It gates on host

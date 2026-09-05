@@ -35,6 +35,13 @@ METRICS = [
 ]
 
 
+# Cells whose numbers came from a driver log rather than a pulled JSON, via
+# salvage_log_json.py. They are real measurements, but the hosts they ran on no
+# longer exist, so they cannot be re-pulled or re-checked -- the reader has to
+# be told which rows those are.
+SALVAGED = set()
+
+
 def load(root):
     """{(workload, machines, cpm, arm): {metric: [values over replicates]}}"""
     cells = defaultdict(lambda: defaultdict(list))
@@ -50,6 +57,8 @@ def load(root):
         arm = f"{m['arm']}:{a2a}"
         cpm = c // mach
         d = json.loads(path.read_text())
+        if d.get("_salvaged_from"):
+            SALVAGED.add((wl, mach, cpm, arm))
         for _, key, _, _ in METRICS:
             if d.get(key) is not None:
                 cells[(wl, mach, cpm, arm)][key].append(d[key])
@@ -132,7 +141,7 @@ def print_inventory(cells):
     """What was actually run -- so the reader never has to trust a claim about
     which arms exist. An arm absent here was NOT measured."""
     print("=== inventory: arms actually measured (timed replicates only)")
-    print(f"{'workload':<26}{'machines':>9}{'arm':>13}{'c':>18}{'reps':>6}")
+    print(f"{'workload':<26}{'machines':>9}{'arm':>13}{'c':>18}{'reps':>6}{'source':>10}")
     seen = defaultdict(set)
     reps = defaultdict(int)
     for (wl, mach, cpm, arm), d in cells.items():
@@ -142,7 +151,9 @@ def print_inventory(cells):
     for k in sorted(seen):
         wl, mach, arm = k
         cs = ",".join(str(c) for c in sorted(seen[k]))
-        print(f"{wl:<26}{mach:>9}{arm:>13}{cs:>18}{reps[k]:>6}")
+        src = "SALVAGED" if any((wl, mach, c // mach, arm) in SALVAGED
+                                for c in seen[k]) else "pulled"
+        print(f"{wl:<26}{mach:>9}{arm:>13}{cs:>18}{reps[k]:>6}{src:>10}")
 
 
 def main(root):
@@ -158,7 +169,9 @@ def main(root):
             base = next((a for a in arms if a.endswith(":tp")), arms[0])
             print(f"\n=== {wl}   {mach} machines   baseline={base}")
             head = f"{'metric':<13}{'c':>5}" + "".join(f"{a:>17}" for a in arms)
-            print(head + "".join(f"{'  x'+a.split(':')[0]:>12}"
+            # Full arm name, a2a kind included: stripping it printed two
+            # identical 'xpd1p1d' columns once pd1p1d:tp joined pd1p1d:v2.
+            print(head + "".join(f"{'  x'+a:>13}"
                                  for a in arms if a != base))
             for label, key, fmt, lower_better in METRICS:
                 if key in DEGENERATE.get(wl, ()):
@@ -182,14 +195,18 @@ def main(root):
                         if a == base:
                             continue
                         if a in vals and base in vals and vals[base]:
-                            row += f"{vals[a]/vals[base]:12.3f}"
+                            row += f"{vals[a]/vals[base]:13.3f}"
                         else:
-                            row += f"{'-':>12}"
+                            row += f"{'-':>13}"
                     print(row)
                 print()
     print_per_box(cells)
     print()
     print("'!' marks replicate spread > 5% -- that cell is not readable.")
+    if SALVAGED:
+        print("SALVAGED rows were rebuilt from the driver log by")
+        print("salvage_log_json.py because the hosts were terminated before")
+        print("sync.sh pull ran. Real measurements, but not re-checkable.")
     print("Ratio columns are arm/baseline: >1 is better for throughput,")
     print("worse for TPOT/TTFT.")
 

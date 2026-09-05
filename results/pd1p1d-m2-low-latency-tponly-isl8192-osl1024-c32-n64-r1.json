@@ -1,0 +1,18 @@
+{
+  "completed": 64.0,
+  "duration": 28.58,
+  "request_throughput": 2.24,
+  "input_throughput": 18344.62,
+  "output_throughput": 2293.08,
+  "total_token_throughput": 20637.7,
+  "concurrency": 27.96,
+  "mean_ttft_ms": 6996.78,
+  "median_ttft_ms": 6475.34,
+  "p99_ttft_ms": 12875.2,
+  "mean_tpot_ms": 5.37,
+  "median_tpot_ms": 5.11,
+  "mean_itl_ms": 38.05,
+  "median_itl_ms": 42.29,
+  "max_concurrency": 32,
+  "_salvaged_from": "results/campaign2.E.log"
+}
