@@ -616,6 +616,31 @@ if (( NNODES > 1 )); then
     unset _v
 fi
 
+# TP=8 MOVES IT THE OTHER WAY: A SINGLE-NODE PREFILL AT 0.85 HAS NO KV POOL AT ALL.
+# Weights do NOT halve at TP=8, so `available` after load is only ~51 GB/GPU, and
+# `kv_cache_configurator._profile_available_bytes` spends it like this:
+#     slack       = pre_model_load_memory * (1 - mem_fraction_static)   # 264 * 0.15 = 39.6 GB
+#     rest_memory = available - slack - mm_reservation - mamba_cache     # 51 - 39.6 - ... <= 0
+#     rest_memory <= 0  ->  ValueError("Loaded weights leave no GPU memory ...")
+# So the fraction has to go UP here (less slack) where TP=16 needed it to go DOWN.
+# Measured 2026-09-05: pd2p2d's two TP=8 prefill instances both died on this at
+# 0.85 (exit 137, 2m39s in) while the TP=8 *decode* instances booted fine -- decode
+# reserves less because DECODE_MAMBA_RATIO is 0.17 against prefill's 0.86.
+# Do NOT trust the exception's own advice: it suggests `> 0.808`, computed as
+# 1 - available/pre, which is the point where slack alone eats `available` and
+# ignores both mm_reservation and the mamba pool it then subtracts -- we were
+# already at 0.85 and still failing. 0.92 is the value the c128 profile already
+# uses, and it leaves ~21 GB of slack, which is enough with decode graphs OFF.
+# Prefill only: raising DECODE_MEM_FRACTION would risk the opposite failure
+# (0.85 already dies in decode graph capture at TP=16).
+SINGLENODE_PREFILL_MEM_FRACTION="${SINGLENODE_PREFILL_MEM_FRACTION:-0.92}"
+if (( NNODES == 1 )); then
+    if awk "BEGIN{exit !($PREFILL_MEM_FRACTION < $SINGLENODE_PREFILL_MEM_FRACTION)}"; then
+        echo "NNODES=1: PREFILL_MEM_FRACTION $PREFILL_MEM_FRACTION -> $SINGLENODE_PREFILL_MEM_FRACTION (TP=$TP_SIZE keeps full weights; 0.85 leaves no KV pool)" >&2
+        PREFILL_MEM_FRACTION="$SINGLENODE_PREFILL_MEM_FRACTION"
+    fi
+fi
+
 # GIN TYPE 5 NEEDS A CROSS-NODE INSTANCE; A SINGLE-NODE `direct` INSTANCE NEEDS 3.
 # Settled 2026-09-04 on a clean same-host contrast: a 1-node ep=8 direct decode
 # instance dies at _C.ElasticBuffer(...) with
