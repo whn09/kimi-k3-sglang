@@ -66,8 +66,88 @@ def spread(vals):
     return 0.0 if len(vals) < 2 or m == 0 else (max(vals) - min(vals)) / m * 100
 
 
+# How many machines of each arm actually carry the workload's bottleneck role.
+# A deployment-level ratio charges PD for the box it hands to prefill; that is
+# the right number to deploy on, but it does NOT measure the backend. To ask
+# "is v2 worse than plain TP", divide by the boxes doing the work AND compare
+# at matched concurrency-per-box -- PD's fewer-but-fuller boxes flatter it
+# otherwise. At isl=128 prefill is trivial, so an aggregated box counts as a
+# decoder; at osl=1 there is no decode at all.
+WORKING_BOXES = {
+    "decode   isl=128  osl=1024": {"agg4:tp": 4, "pd1p3d:v2": 3, "pd2p2d:v2": 2},
+    "prefill  isl=8192 osl=1": {"agg4:tp": 4, "pd3p1d:v2": 3, "pd2p2d:v2": 2},
+}
+# An arm cannot admit more than this many concurrent requests per box.
+# DSPARK pins max_running_requests=48, which caps pd2p2d at 2x48=96.
+ADMIT_CAP = {"pd2p2d:v2": 48, "pd1p3d:v2": 48, "pd1p1d:v2": 48}
+
+
+def per_box(cells, wl, key):
+    """[(arm, req/box, metric/box)] for the arms whose box count we know."""
+    boxes = WORKING_BOXES.get(wl)
+    if not boxes:
+        return None
+    out = []
+    for (w, mach, cpm, arm), d in cells.items():
+        if w != wl or arm not in boxes or key not in d:
+            continue
+        n = boxes[arm]
+        admitted = min(mach * cpm, n * ADMIT_CAP.get(arm, 10**9))
+        out.append((arm, admitted / n, mean(d[key]) / n))
+    return sorted(out)
+
+
+def interp(curve, r):
+    """Linear interpolation on the baseline curve. Never extrapolates."""
+    ks = sorted(curve)
+    if not ks or r < ks[0] or r > ks[-1]:
+        return None
+    for a, b in zip(ks, ks[1:]):
+        if a <= r <= b:
+            return curve[a] if a == b else curve[a] + (r-a)/(b-a)*(curve[b]-curve[a])
+
+
+def print_per_box(cells):
+    for wl, boxes in WORKING_BOXES.items():
+        key = "input_throughput" if wl.endswith("osl=1") else "output_throughput"
+        rows = per_box(cells, wl, key)
+        if not rows:
+            continue
+        base = next(a for a in boxes if a.endswith(":tp"))
+        curve = {r: v for a, r, v in rows if a == base}
+        print(f"\n=== per working box, matched load -- {wl}")
+        print(f"    metric={key}, baseline={base} "
+              f"({', '.join(f'{r:.0f} req/box -> {v:.1f}' for r, v in sorted(curve.items()))})")
+        print(f"{'arm':<12}{'req/box':>9}{'per box':>10}{'base@same':>11}{'ratio':>8}")
+        for arm, r, v in rows:
+            if arm == base:
+                continue
+            b = interp(curve, r)
+            tail = (f"{b:>11.1f}{v/b:>8.3f}" if b
+                    else f"{'-':>11}{'  n/a: outside baseline range':>8}")
+            print(f"{arm:<12}{r:>9.1f}{v:>10.1f}" + tail)
+
+
+def print_inventory(cells):
+    """What was actually run -- so the reader never has to trust a claim about
+    which arms exist. An arm absent here was NOT measured."""
+    print("=== inventory: arms actually measured (timed replicates only)")
+    print(f"{'workload':<26}{'machines':>9}{'arm':>13}{'c':>18}{'reps':>6}")
+    seen = defaultdict(set)
+    reps = defaultdict(int)
+    for (wl, mach, cpm, arm), d in cells.items():
+        seen[(wl, mach, arm)].add(mach * cpm)
+        reps[(wl, mach, arm)] = max(reps[(wl, mach, arm)],
+                                    max(len(v) for v in d.values()))
+    for k in sorted(seen):
+        wl, mach, arm = k
+        cs = ",".join(str(c) for c in sorted(seen[k]))
+        print(f"{wl:<26}{mach:>9}{arm:>13}{cs:>18}{reps[k]:>6}")
+
+
 def main(root):
     cells = load(root)
+    print_inventory(cells)
     for wl in WORKLOAD.values():
         keys = [k for k in cells if k[0] == wl]
         if not keys:
@@ -107,6 +187,8 @@ def main(root):
                             row += f"{'-':>12}"
                     print(row)
                 print()
+    print_per_box(cells)
+    print()
     print("'!' marks replicate spread > 5% -- that cell is not readable.")
     print("Ratio columns are arm/baseline: >1 is better for throughput,")
     print("worse for TPOT/TTFT.")
