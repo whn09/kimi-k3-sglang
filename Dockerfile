@@ -277,10 +277,18 @@ RUN set -eu; \
 # so a ref at or after it runs on this CUDA 13.0.3 base. The grep below asserts
 # that property of the checked-out tree, because pinning an older sha would
 # otherwise produce a green build that dies on the first MoE token.
-ARG DEEPEP_REF=97d8f9bcc1be31e9036db2ab591ef9b9f4e38619
+# 2026-10-15: 97d8f9b -> 6de427b (amazon main), the ref the kimi-k3-vllm image and
+# the official sm103 EP image use, so an sglang-vs-vLLM DeepEP comparison is one
+# kernel tree. It also carries "keep cached dispatch data channels above QP 0",
+# the fix for the hybrid-mode Xid 31. NEW IMAGE GENERATION: do not mix rows from
+# a 97d8f9b image into a comparison with this one.
+ARG DEEPEP_REF=6de427b1728aaac46f473f91b429397eb24de691
 # sm_103 (p6-b300). NOT a backward-compatible target of sm_100, and a Hopper
 # cubin does not run here at all, so this is stamped into the image below.
 ARG DEEPEP_ARCH=10.3
+# Compile parallelism for DeepEP's extension. Empty = torch's default (all
+# cores); set it when building on a host that is running someone else's job.
+ARG DEEPEP_MAX_JOBS=
 ENV K3_DEEPEP_ARCH=${DEEPEP_ARCH}
 # Deliberately a full 40-char sha and no `ADD .../commits/<ref>` cache-buster.
 # The standalone kit floats `main` and needs the ADD so that the layer cache
@@ -320,7 +328,7 @@ print(' '.join(sorted({d.metadata['Name'] for d in distributions() \
     NCCL_LIB="$(python3 -c 'import nvidia.nccl, os; print(os.path.join(list(nvidia.nccl.__path__)[0], "lib"))')"; \
     test -e "$NCCL_LIB/libnccl.so.2" || { echo "FATAL: no libnccl.so.2 under $NCCL_LIB"; exit 1; }; \
     echo "linking DeepEP against pip NCCL: $NCCL_LIB"; \
-    TORCH_CUDA_ARCH_LIST="$DEEPEP_ARCH" LIBRARY_PATH="$NCCL_LIB:${LIBRARY_PATH:-}" \
+    env ${DEEPEP_MAX_JOBS:+MAX_JOBS=$DEEPEP_MAX_JOBS} TORCH_CUDA_ARCH_LIST="$DEEPEP_ARCH" LIBRARY_PATH="$NCCL_LIB:${LIBRARY_PATH:-}" \
       python3 setup.py bdist_wheel; \
     pip install --no-cache-dir --no-deps dist/*.whl; \
     rm -rf build dist; \
@@ -403,7 +411,8 @@ RUN set -eu; \
     apply_one fmt_layer.diff       srt/layers/moe/fused_moe_triton/layer.py; \
     apply_one mr_deep_gemm.diff    srt/layers/moe/moe_runner/deep_gemm.py; \
     apply_one ep_moe_kernels.diff  kernels/ops/moe/ep_moe_kernels.py; \
-    echo "all five DeepEP v2 patches accounted for"
+    echo "all five DeepEP v2 patches accounted for"; \
+    python3 /opt/k3-patches/deepep_v2_log_sms.py "$SGL"
 
 # ---- build-time sanity checks ----
 # libcuda.so.1 is absent at build time (no GPU), so use the CUDA stub to let the
@@ -469,6 +478,8 @@ RUN set -eu; \
     SGL=$(python3 -c "import sglang, os; print(os.path.dirname(sglang.__file__))"); \
     grep -q "KimiK3ForConditionalGeneration" "$SGL/srt/arg_groups/moe_hook.py" \
       || { echo "FATAL: K3 is not in the deepep_v2 whitelist -- moe_hook patch did not land"; exit 1; }; \
+    grep -q "\[k3-sms\]" "$SGL/srt/layers/moe/token_dispatcher/deepep_v2.py" \
+      || { echo "FATAL: the SM-logging patch did not land -- an auto-SM run could not report its count"; exit 1; }; \
     grep -q "is_deepep_v2" "$SGL/srt/models/kimi_k3.py" \
       || { echo "FATAL: kimi_k3.py _ep_a2a lists do not mention deepep_v2 -- WRONG NUMERICS if run"; exit 1; }; \
     grep -q "from deep_ep import ElasticBuffer" "$SGL/srt/layers/moe/token_dispatcher/deepep_v2.py" \

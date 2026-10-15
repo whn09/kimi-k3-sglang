@@ -75,6 +75,8 @@ docker run -d --name "$NAME" \
     -e CGMAXBS="${CGMAXBS:-$DECODE_CGMAXBS}" \
     -e MAXRUN="${MAXRUN:-$DECODE_MAXRUN}" \
     -e SPEC_BLOCK_SIZE="${SPEC_BLOCK_SIZE:-7}" \
+    -e SGLANG_DEEPEP_V2_NUM_SMS="$DECODE_DEEPEP_NUM_SMS" \
+    -e ENABLE_METRICS="${ENABLE_METRICS:-1}" \
     ${DEEPEP_ENVS[@]+"${DEEPEP_ENVS[@]}"} \
     -e TP_SIZE="$TP_SIZE" -e PORT="$PORT" \
     -e NNODES="$NNODES" -e NODE_RANK="$NODE_RANK" \
@@ -85,7 +87,7 @@ docker run -d --name "$NAME" \
 
 echo "launched '$NAME' (profile=$PROFILE, mem=${MEM_FRACTION:-$DECODE_MEM_FRACTION}, dcp=${DCP_SIZE:-$DECODE_DCP_SIZE}, mamba=${MAMBA_RATIO:-$DECODE_MAMBA_RATIO}, symm=${SYMM_MEM:-$DECODE_SYMM_MEM})  ->  docker logs -f $NAME"
 # CAP is an env var, not a flag, so it is invisible in `docker inspect .Args`.
-echo "  a2a=$MOE_A2A_BACKEND ep=$EP_SIZE mode=$DEEPEP_V2_MODE cap=${CAP:-$DECODE_CAP} chunk=${CHUNK:-$DECODE_CHUNK} decode-graphs=ON max-bs=${CGMAXBS:-${DECODE_CGMAXBS:-<sglang default>}} max-run=${MAXRUN:-${DECODE_MAXRUN:-<DSPARK 48>}}"
+echo "  a2a=$MOE_A2A_BACKEND ep=$EP_SIZE mode=$DEEPEP_V2_MODE cap=${CAP:-$DECODE_CAP} chunk=${CHUNK:-$DECODE_CHUNK} decode-graphs=ON max-bs=${CGMAXBS:-${DECODE_CGMAXBS:-<sglang default>}} max-run=${MAXRUN:-${DECODE_MAXRUN:-<DSPARK 48>}} deepep-sms=$DECODE_DEEPEP_NUM_SMS(0=auto) spec=$([ "${NO_SPEC:-0}" = 1 ] && echo off || echo on)"
 if (( NNODES > 1 )); then
     echo "  tp=$TP_SIZE over $NNODES nodes, this host is node-rank $NODE_RANK, rendezvous ${DIST_INIT_ADDR}:${DIST_INIT_PORT}"
     echo "  (rank != 0 never binds :$PORT -- do not wait for 'server is fired up' there)"

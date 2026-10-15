@@ -156,7 +156,13 @@ echo "=== Kimi-K3 DECODE: TP=${TP_SIZE} ep=${EP_SIZE:-1} mode=${DEEPEP_V2_MODE:-
      "nodes=${NNODES}/rank${NODE_RANK} a2a=${MOE_A2A_BACKEND:-none}" \
      "cap=${SGLANG_DEEPEP_V2_NUM_MAX_DISPATCH_TOKENS_PER_RANK:-n/a}" \
      "gin=${NCCL_GIN_TYPE:-unset} graphs=ON max-bs=${CGMAXBS:-<sglang default>}" \
-     "max-run=${MAXRUN:-<DSPARK 48>} dcp=${DCP_SIZE:-8} mem=${MEM_FRACTION:-0.85} ==="
+     "max-run=${MAXRUN:-<DSPARK 48>} dcp=${DCP_SIZE:-8} mem=${MEM_FRACTION:-0.85}" \
+     "deepep-sms=${SGLANG_DEEPEP_V2_NUM_SMS:-0}(0=auto) metrics=${ENABLE_METRICS:-1} ==="
+
+# Prometheus /metrics on the HTTP port. The SM sweep's decode sampler reads
+# sglang:num_running_reqs / sglang:gen_throughput from it to prove decode was full.
+METRICS_ARGS=()
+[[ "${ENABLE_METRICS:-1}" == "1" ]] && METRICS_ARGS=(--enable-metrics)
 
 exec python3 -m sglang.launch_server \
     --model-path "$MODEL_PATH" \
@@ -179,6 +185,7 @@ exec python3 -m sglang.launch_server \
     "${EP_ARGS[@]}" \
     "${CG_ARGS[@]}" \
     "${RUN_ARGS[@]}" \
+    "${METRICS_ARGS[@]}" \
     ${MULTINODE_ARGS[@]+"${MULTINODE_ARGS[@]}"} \
     --host 0.0.0.0 \
     --port "$PORT" \

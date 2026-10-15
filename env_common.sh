@@ -84,7 +84,14 @@ DRAFT_MODEL_PATH="${DRAFT_MODEL_PATH:-/models/Kimi-K3-DSpark}"
 # fails to boot and every single-node arm quietly measures NVLink. A fresh
 # `docker build` from this Dockerfile pins nvidia-nccl-cu13 2.31.2 before the
 # DeepEP stage, so tag such a build nccl2312 too rather than moving :latest.
-IMAGE="${IMAGE:-kimi-k3-efa-v2:nccl2312}"
+# 2026-10-15: the ap-south-2 fleet. Built from this Dockerfile (DeepEP 6de427b +
+# the [k3-sms] logging patch) by 01_build_push.sh and pulled on all four hosts.
+# A NEW image generation relative to nccl2312 (97d8f9b): never mix their rows.
+K3_REGION="${K3_REGION:-ap-south-2}"   # not AWS_REGION: a laptop-side one would retarget the registry
+ECR_REGISTRY="${ECR_REGISTRY:-579019700964.dkr.ecr.${K3_REGION}.amazonaws.com}"
+ECR_REPO="${ECR_REPO:-kimi-k3-sglang-b300}"
+IMAGE_TAG="${IMAGE_TAG:-sgl07c8f729-deepep6de427b-nccl2312-efa1.50.0-smslog1}"
+IMAGE="${IMAGE:-${ECR_REGISTRY}/${ECR_REPO}:${IMAGE_TAG}}"
 
 # ---- serving profile ----
 # The SGLang cookbook page for this model
@@ -372,6 +379,11 @@ DECODE_MAXRUN="${DECODE_MAXRUN:-}"
 # BELOW DECODE_MAXRUN is the one combination that is silently slow rather than
 # loud: the batch is legal for the a2a but uncaptured.
 DECODE_CGMAXBS="${DECODE_CGMAXBS:-}"
+# DeepEP v2 SM count for the DECODE side only (SGLANG_DEEPEP_V2_NUM_SMS; 0 =
+# DeepEP's pick, which is >= 64 here because sglang builds the buffer with
+# prefer_overlap_with_compute=False). Forwarded by 21_launch_decode.sh only, so
+# prefill always keeps DeepEP's own choice and is identical across SM arms.
+DECODE_DEEPEP_NUM_SMS="${DECODE_DEEPEP_NUM_SMS:-0}"
 
 # STANDALONE (unified server) is the arm that has to satisfy BOTH constraints
 # with one number, so it gets the compromise: 1024 with graphs on. That is not a
@@ -506,10 +518,10 @@ PRIMARY_IFACE="${PRIMARY_IFACE:-enp71s0}"
 # 2026-09-05 rebuild. These are the PRIMARY (enp71s0) addresses -- `hostname -I`
 # lists all 18 interfaces on a b300 and its first entry is not reliably the ENA
 # one, so take them from `ip route get 1.1.1.1` instead.
-B300_1_IP="${B300_1_IP:-172.31.17.128}"  # B300-1 / i-0c0e3527fe020d581 (2026-09-05)
-B300_2_IP="${B300_2_IP:-172.31.29.80}"   # B300-2 / i-05d9502274ebc7d80 (2026-09-05)
-B300_3_IP="${B300_3_IP:-172.31.26.115}"  # B300-3 / i-0355050cfbc695dd1 (2026-09-05)
-B300_4_IP="${B300_4_IP:-172.31.26.251}"  # B300-4 / i-0005209032eb19483 (2026-09-05)
+B300_1_IP="${B300_1_IP:-172.31.10.219}"  # B300-1, ap-south-2 (2026-10-14)
+B300_2_IP="${B300_2_IP:-172.31.7.243}"   # B300-2
+B300_3_IP="${B300_3_IP:-172.31.0.212}"   # B300-3
+B300_4_IP="${B300_4_IP:-172.31.9.249}"   # B300-4
 
 # The drivers speak in ssh ALIASES (B300-1) because that is the only handle the
 # laptop has on a host; the launchers and both routers need IPs. One mapping, so
