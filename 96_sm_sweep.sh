@@ -97,7 +97,9 @@ first_sms="${SMS_LIST%% *}"
 if running "$P0" kimi-k3-prefill && running "$P1" kimi-k3-prefill \
    && [[ "$(cenv "$P0" kimi-k3-prefill DCP_SIZE)" == "$PREFILL_DCP" ]]; then
     say "### prefill containers already running on $P0+$P1 -- reusing (they must have spec=$SPEC)"
+    prefill_launched=0
 else
+    prefill_launched=1
     teardown_all $P0 $P1
     preflight_free_gpus $P0 $P1 || exit 1
     say "### prefill TP16/EP16 on $P0+$P1"
@@ -107,7 +109,15 @@ fi
 cenv() { sshx "$1" "docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' $2 2>/dev/null | sed -n 's/^$3=//p'"; }
 dec_ok() { [[ "$(cenv "$1" kimi-k3-decode SGLANG_DEEPEP_V2_NUM_SMS)" == "$first_sms" \
               && "$(cenv "$1" kimi-k3-decode DECODE_ATTN)" == "$DECODE_ATTN" ]]; }
-if running "$D0" kimi-k3-decode && running "$D1" kimi-k3-decode && dec_ok "$D0" && dec_ok "$D1"; then
+# A decode is never reused across a prefill restart: it keeps the old prefill's
+# Mooncake sessions and sits in "Attempting to reconnect" (seen 2026-10-15).
+# So it must have STARTED after the prefill it would serve, and prefill must not
+# have been (re)launched by this invocation.
+started() { sshx "$1" "docker inspect -f '{{.State.StartedAt}}' $2 2>/dev/null"; }
+p_start=$(started "$P0" kimi-k3-prefill)
+dec_after_prefill() { [[ -n "$p_start" && "$(started "$1" kimi-k3-decode)" > "$p_start" ]]; }
+if (( ! prefill_launched )) && running "$D0" kimi-k3-decode && running "$D1" kimi-k3-decode \
+   && dec_ok "$D0" && dec_ok "$D1" && dec_after_prefill "$D0" && dec_after_prefill "$D1"; then
     say "### decode containers already running on $D0+$D1 with sms=$first_sms -- reusing for the first run"
 else
     say "### decode TP16/EP16 on $D0+$D1 for the first run (sms=$first_sms), in parallel with prefill"
