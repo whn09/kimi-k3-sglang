@@ -94,8 +94,14 @@ else
     sshx "$P0" "cd $REMOTE && $PENV NODE_RANK=0 bash 20_launch_prefill.sh" 2>&1 | sed 's/^/    /' | tee -a "$SUMMARY"
     sshx "$P1" "cd $REMOTE && $PENV NODE_RANK=1 bash 20_launch_prefill.sh" 2>&1 | sed 's/^/    /' | tee -a "$SUMMARY"
 fi
-say "### decode TP16/EP16 on $D0+$D1 for the first run (sms=$first_sms), in parallel with prefill"
-launch_decode "$first_sms"
+dec_sms() { sshx "$1" "docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' kimi-k3-decode 2>/dev/null | sed -n 's/^SGLANG_DEEPEP_V2_NUM_SMS=//p'"; }
+if running "$D0" kimi-k3-decode && running "$D1" kimi-k3-decode \
+   && [[ "$(dec_sms "$D0")" == "$first_sms" && "$(dec_sms "$D1")" == "$first_sms" ]]; then
+    say "### decode containers already running on $D0+$D1 with sms=$first_sms -- reusing for the first run"
+else
+    say "### decode TP16/EP16 on $D0+$D1 for the first run (sms=$first_sms), in parallel with prefill"
+    launch_decode "$first_sms"
+fi
 prelaunched=1
 WAIT_CONTAINER=kimi-k3-prefill wait_ready "$P0" "$PORT" "prefill on $P0" || exit 1
 
@@ -113,9 +119,12 @@ for rep in $(seq 1 "$REPS"); do
 
         # The SM count every rank really uses (patches/deepep_v2_log_sms.py).
         # The first dispatch happens in graph capture, so it is logged by now.
-        lines=$( { sshx "$D0" "docker logs kimi-k3-decode 2>&1"; sshx "$D1" "docker logs kimi-k3-decode 2>&1"; } | grep '\[k3-sms\]')
-        nranks=$(sed -n 's/.* rank=\([0-9]*\).*/\1/p' <<<"$lines" | sort -u | wc -l | tr -d ' ')
-        vals=$(sed -n 's/.*dispatch num_sms=\([0-9]*\).*/\1/p' <<<"$lines" | sort -u)
+        # grep -o, NEVER per line: 16 processes print at once and several records
+        # land glued on one line, so a per-line parse sees 9/16 ranks.
+        lines=$( { sshx "$D0" "docker logs kimi-k3-decode 2>&1"; sshx "$D1" "docker logs kimi-k3-decode 2>&1"; } \
+            | grep -o 'dispatch num_sms=[0-9]* (SGLANG_DEEPEP_V2_NUM_SMS=[0-9]*) rank=[0-9]*')
+        nranks=$(sed -n 's/.* rank=\([0-9]*\)$/\1/p' <<<"$lines" | sort -u | wc -l | tr -d ' ')
+        vals=$(sed -n 's/^dispatch num_sms=\([0-9]*\) .*/\1/p' <<<"$lines" | sort -u)
         if [[ "$nranks" != 16 || $(wc -l <<<"$vals") != 1 || -z "$vals" ]]; then
             say "FATAL: [k3-sms] from $nranks/16 ranks, values '$(tr '\n' ' ' <<<"$vals")'"; exit 1
         fi
