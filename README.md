@@ -5,6 +5,13 @@ single-node then 1P1D prefill/decode disaggregation over EFA.
 
 ## Decode SM count: 12 vs auto (`96_sm_sweep.sh`, 2026-10-15)
 
+**Cross-framework comparison** (vLLM DP16 vs sglang DP16 / TP16 decode, same hosts and
+DeepEP): generated table in
+[kimi-k3-vllm's README](https://github.com/whn09/kimi-k3-vllm#results) (`gen_summary.py`
+there reads this repo's `results/`). In short: sglang's decode gap to vLLM is mostly the
+TP16 cross-node attention topology; with `DECODE_ATTN=dp` it closes to a few percent at
+32 requests/GPU.
+
 Same method as `kimi-k3-vllm/94_sm_sweep.sh`. sglang already passes
 `SGLANG_DEEPEP_V2_NUM_SMS` to `ElasticBuffer.dispatch` (combine reuses the
 dispatch handle's count), but its default 0 lets DeepEP pick, and because sglang
