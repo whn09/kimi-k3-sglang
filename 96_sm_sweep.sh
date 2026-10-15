@@ -38,6 +38,12 @@ NO_SPEC="${NO_SPEC:-1}"
 # dcp needs prefill on the same dcp, so prefill is relaunched when it differs.
 DECODE_ATTN="${DECODE_ATTN:-tp}"
 PREFILL_DCP=$([[ "$DECODE_ATTN" == dcp ]] && echo 16 || echo 1)
+# DP attention un-shards the attention weights: 188.95 GB/GPU after load on
+# b300 (2026-10-15), so the multi-node default mem-fraction 0.78 (~201 GB
+# static) leaves no KV pool and the server refuses to start. 512 running over 16
+# DP ranks only needs ~98K tokens/rank, so 0.86 (~33 GB KV, ~36 GB left for
+# graphs + the ElasticBuffer) is plenty. Empty = the launcher's default.
+DECODE_MEMFRAC="${DECODE_MEMFRAC:-$([[ "$DECODE_ATTN" == dp ]] && echo 0.86 || true)}"
 SPEC=$([[ "$NO_SPEC" == 1 ]] && echo off || echo on)
 IMG="${IMAGE##*:}"; IMG="${IMG%%-*}"   # image generation, e.g. sgla6a8c560
 CAPD="${CAPD:-512}"
@@ -57,9 +63,9 @@ fi
 
 COMMON="PROFILE=${PROFILE} MOE_A2A_BACKEND=deepep_v2 DISABLE_RADIX=1 NO_SPEC=$NO_SPEC IMAGE=$IMAGE NNODES=2 TP_SIZE=16"
 PENV="$COMMON DIST_INIT_ADDR=$B300_1_IP DCP_SIZE=$PREFILL_DCP"
-DENV="$COMMON DIST_INIT_ADDR=$B300_3_IP DECODE_ATTN=$DECODE_ATTN DECODE_CAP=$CAPD DECODE_CHUNK=$CAPD DECODE_MAXRUN=$MAXRUN_D DECODE_CGMAXBS=$MAXRUN_D"
+DENV="$COMMON DIST_INIT_ADDR=$B300_3_IP DECODE_ATTN=$DECODE_ATTN ${DECODE_MEMFRAC:+MEM_FRACTION=$DECODE_MEMFRAC} DECODE_CAP=$CAPD DECODE_CHUNK=$CAPD DECODE_MAXRUN=$MAXRUN_D DECODE_CGMAXBS=$MAXRUN_D"
 
-say "plan: attn=$DECODE_ATTN (prefill dcp=$PREFILL_DCP) sms=[$SMS_LIST] x reps=$REPS  spec=$SPEC  decode cap=$CAPD maxrun=$MAXRUN_D  ISL/OSL=$ISL/$OSL  concs=[${CONCS:-<92_sm_bench default>}]"
+say "plan: attn=$DECODE_ATTN (prefill dcp=$PREFILL_DCP, decode mem=${DECODE_MEMFRAC:-default}) sms=[$SMS_LIST] x reps=$REPS  spec=$SPEC  decode cap=$CAPD maxrun=$MAXRUN_D  ISL/OSL=$ISL/$OSL  concs=[${CONCS:-<92_sm_bench default>}]"
 say "image: $IMAGE"
 
 for h in $P0 $P1 $D0 $D1; do
