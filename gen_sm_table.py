@@ -22,8 +22,8 @@ from pathlib import Path
 from statistics import mean
 
 PAT = re.compile(
-    r"k3s_pd2x2_dec-tp16ep16_sms(?P<sms>\d+)_spec(?P<kv>on|off)_cap\d+_run(?P<seqs>\d+)"
-    r"_isl(?P<isl>\d+)_osl(?P<osl>\d+)_c(?P<conc>\d+)_n(?P<n>\d+)_r(?P<rep>\d+)_(?P<ts>[\d-]+)\.json$"
+    r"k3s_pd2x2_dec-(?P<attn>tp|dp|dcp)16ep16_sms(?P<sms>\d+)_spec(?P<spec>on|off)_cap\d+_run(?P<seqs>\d+)"
+    r"_isl(?P<isl>\d+)_osl(?P<osl>\d+)_c(?P<conc>\d+)_n(?P<n>\d+)_r(?P<rep>\d+)(?:_img-(?P<img>[a-z0-9]+))?_(?P<ts>[\d-]+)\.json$"
 )
 
 
@@ -54,12 +54,13 @@ def main(root):
             continue
         dpath = p.with_name(p.name[:-5] + ".decode.json")
         dec = json.loads(dpath.read_text()) if dpath.exists() else {}
-        key = (m["kv"], int(m["seqs"]), int(m["isl"]), int(m["osl"]), int(m["conc"]), int(m["sms"]))
+        # Files from before the image was stamped are the 07c8f729 generation.
+        key = (f"{m['img'] or 'sgl07c8f729'}/{m['attn']}/spec-{m['spec']}", int(m["seqs"]), int(m["isl"]), int(m["osl"]), int(m["conc"]), int(m["sms"]))
         rep = int(m["rep"])
         if rep not in runs[key] or m["ts"] > runs[key][rep][0]:
             runs[key][rep] = (m["ts"], json.loads(p.read_text()), dec)
 
-    print("| spec | ISL/OSL | conc | SM (req -> used) | reps | decode-full tok/s | "
+    print("| image/attn/spec | ISL/OSL | conc | SM (req -> used) | reps | decode-full tok/s | "
           "max running / target | TPOT p50 (ms) | ITL p50 (ms) | TPOT p99 (ms) | client out tok/s | dur (s) |")
     print("|---|---|---|---|---|---|---|---|---|---|---|---|")
     groups = defaultdict(dict)  # (kv, seqs, isl, osl, conc) -> sms -> metrics
@@ -82,7 +83,7 @@ def main(root):
 
     print("\n**SM12 vs auto** (positive tok/s and negative TPOT favour SM12; "
           "noise = larger of the two arms' own max-min spread)\n")
-    print("| spec | ISL/OSL | conc | Δ decode-full tok/s | Δ TPOT p50 | noise (tok/s / TPOT) | verdict |")
+    print("| image/attn/spec | ISL/OSL | conc | Δ decode-full tok/s | Δ TPOT p50 | noise (tok/s / TPOT) | verdict |")
     print("|---|---|---|---|---|---|---|")
     for g, arms in sorted(groups.items(), key=lambda kv_: (kv_[0][0], kv_[0][2], kv_[0][3], kv_[0][4])):
         if 12 not in arms or 0 not in arms:

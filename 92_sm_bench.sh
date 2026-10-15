@@ -20,6 +20,7 @@ OSL="${OSL:-2048}"
 CAPD="${CAPD:-512}"
 MAXRUN_D="${MAXRUN_D:-512}"
 SPEC="${SPEC:-off}"
+ATTN="${ATTN:-tp}"             # decode attention layout: tp | dp | dcp (label)
 # 1/4, 1/2 and all of the decode admission cap. The top point is the
 # "decode full" row; the sampler proves whether it got there.
 CONCS="${CONCS:-$(( MAXRUN_D / 4 )) $(( MAXRUN_D / 2 )) $MAXRUN_D}"
@@ -28,6 +29,9 @@ REP="${REP:-1}"
 REQ_SMS="${REQ_SMS:?REQ_SMS (requested decode SMs, 0 = auto)}"
 RESOLVED_SMS="${RESOLVED_SMS:-unknown}"
 DECODE_URL="${DECODE_URL:-http://${B300_3_IP}:${PORT}}"
+# Image generation from the image actually benched (not from IMAGE_TAG, which
+# an IMAGE= override does not touch): "...:sgla6a8c560-deepep..." -> sgla6a8c560
+IMG="${IMAGE##*:}"; IMG="${IMG%%-*}"
 OUT="$SCRIPT_DIR_HOST/results"
 mkdir -p "$OUT"
 
@@ -43,7 +47,7 @@ rm -f "$OUT"/warmup_sms*
 
 for c in $CONCS; do
     n=$(( c * NPROMPT_MULT )); (( n < 64 )) && n=64
-    tag="k3s_pd2x2_dec-tp16ep16_sms${REQ_SMS}_spec${SPEC}_cap${CAPD}_run${MAXRUN_D}_isl${ISL}_osl${OSL}_c${c}_n${n}_r${REP}_$(date +%Y%m%d-%H%M%S)"
+    tag="k3s_pd2x2_dec-${ATTN}16ep16_sms${REQ_SMS}_spec${SPEC}_cap${CAPD}_run${MAXRUN_D}_isl${ISL}_osl${OSL}_c${c}_n${n}_r${REP}_img-${IMG}_$(date +%Y%m%d-%H%M%S)"
     echo "== $tag  (resolved sms=$RESOLVED_SMS)"
     python3 decode_sampler.py --out "$OUT/$tag.decode.json" --target "$c" "$DECODE_URL" &
     spid=$!
@@ -58,7 +62,7 @@ for c in $CONCS; do
     python3 - "$OUT/$tag.decode.json" <<PY
 import json, sys
 p = sys.argv[1]; d = json.load(open(p))
-d.update(requested_sms="$REQ_SMS", resolved_sms="$RESOLVED_SMS", rep=$REP, spec="$SPEC",
+d.update(attn="$ATTN", requested_sms="$REQ_SMS", resolved_sms="$RESOLVED_SMS", rep=$REP, spec="$SPEC",
          cap_decode=$CAPD, maxrun_decode=$MAXRUN_D, image="$IMAGE")
 json.dump(d, open(p, "w"))
 PY

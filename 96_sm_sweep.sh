@@ -7,6 +7,8 @@
 #   SMS_LIST="12 0 24" REPS=3 bash 96_sm_sweep.sh
 #   CONCS=512 bash 96_sm_sweep.sh             # only the decode-full point
 #   NO_SPEC=0 bash 96_sm_sweep.sh             # with DSpark (see SPEC below)
+#   DECODE_ATTN=dp bash 96_sm_sweep.sh        # decode DP attention (= vLLM DP16)
+#   DECODE_ATTN=dp SMS_LIST=12 REPS=1 bash 96_sm_sweep.sh   # tp-vs-dp check at SM12
 #
 # Topology = the pd2x2 arm of 94_matched.sh, the one that matches "2P2D, TP16 /
 # EP16": ONE prefill instance TP16/EP16 on B300-1+2 and ONE decode instance
@@ -32,6 +34,10 @@ source ./lib_drive.sh
 SMS_LIST="${SMS_LIST:-12 0}"
 REPS="${REPS:-2}"
 NO_SPEC="${NO_SPEC:-1}"
+# Decode attention layout (start_decode.sh): tp (pd2x2 default) | dp (= vLLM DP16) | dcp.
+# dcp needs prefill on the same dcp, so prefill is relaunched when it differs.
+DECODE_ATTN="${DECODE_ATTN:-tp}"
+PREFILL_DCP=$([[ "$DECODE_ATTN" == dcp ]] && echo 16 || echo 1)
 SPEC=$([[ "$NO_SPEC" == 1 ]] && echo off || echo on)
 CAPD="${CAPD:-512}"
 MAXRUN_D="${MAXRUN_D:-512}"
@@ -49,10 +55,10 @@ if [[ "$SPEC" == on ]]; then
 fi
 
 COMMON="PROFILE=${PROFILE} MOE_A2A_BACKEND=deepep_v2 DISABLE_RADIX=1 NO_SPEC=$NO_SPEC IMAGE=$IMAGE NNODES=2 TP_SIZE=16"
-PENV="$COMMON DIST_INIT_ADDR=$B300_1_IP"
-DENV="$COMMON DIST_INIT_ADDR=$B300_3_IP DECODE_CAP=$CAPD DECODE_CHUNK=$CAPD DECODE_MAXRUN=$MAXRUN_D DECODE_CGMAXBS=$MAXRUN_D"
+PENV="$COMMON DIST_INIT_ADDR=$B300_1_IP DCP_SIZE=$PREFILL_DCP"
+DENV="$COMMON DIST_INIT_ADDR=$B300_3_IP DECODE_ATTN=$DECODE_ATTN DECODE_CAP=$CAPD DECODE_CHUNK=$CAPD DECODE_MAXRUN=$MAXRUN_D DECODE_CGMAXBS=$MAXRUN_D"
 
-say "plan: sms=[$SMS_LIST] x reps=$REPS  spec=$SPEC  decode cap=$CAPD maxrun=$MAXRUN_D  ISL/OSL=$ISL/$OSL  concs=[${CONCS:-<92_sm_bench default>}]"
+say "plan: attn=$DECODE_ATTN (prefill dcp=$PREFILL_DCP) sms=[$SMS_LIST] x reps=$REPS  spec=$SPEC  decode cap=$CAPD maxrun=$MAXRUN_D  ISL/OSL=$ISL/$OSL  concs=[${CONCS:-<92_sm_bench default>}]"
 say "image: $IMAGE"
 
 for h in $P0 $P1 $D0 $D1; do
@@ -75,8 +81,10 @@ launch_decode() {   # launch_decode <sms>
     sshx "$D1" "cd $REMOTE && $DENV DECODE_DEEPEP_NUM_SMS=$1 NODE_RANK=1 bash 21_launch_decode.sh" 2>&1 | sed 's/^/    /' | tee -a "$SUMMARY"
 }
 
-running() {   # running <host> <container>
-    [[ "$(sshx "$1" "docker inspect -f '{{.State.Status}}' $2 2>/dev/null")" == running ]]
+# running <host> <container>: up AND on $IMAGE. A container left over from
+# another image generation must never be reused into this one's rows.
+running() {
+    [[ "$(sshx "$1" "docker inspect -f '{{.State.Status}} {{.Config.Image}}' $2 2>/dev/null")" == "running $IMAGE" ]]
 }
 
 # ---- prefill (once) and the FIRST decode, booted in parallel ----
@@ -85,7 +93,8 @@ running() {   # running <host> <container>
 # A prefill that is already healthy OR still booting (both ranks' containers
 # running) is reused, never relaunched: a relaunch throws away its JIT warmup.
 first_sms="${SMS_LIST%% *}"
-if running "$P0" kimi-k3-prefill && running "$P1" kimi-k3-prefill; then
+if running "$P0" kimi-k3-prefill && running "$P1" kimi-k3-prefill \
+   && [[ "$(cenv "$P0" kimi-k3-prefill DCP_SIZE)" == "$PREFILL_DCP" ]]; then
     say "### prefill containers already running on $P0+$P1 -- reusing (they must have spec=$SPEC)"
 else
     teardown_all $P0 $P1
@@ -94,9 +103,10 @@ else
     sshx "$P0" "cd $REMOTE && $PENV NODE_RANK=0 bash 20_launch_prefill.sh" 2>&1 | sed 's/^/    /' | tee -a "$SUMMARY"
     sshx "$P1" "cd $REMOTE && $PENV NODE_RANK=1 bash 20_launch_prefill.sh" 2>&1 | sed 's/^/    /' | tee -a "$SUMMARY"
 fi
-dec_sms() { sshx "$1" "docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' kimi-k3-decode 2>/dev/null | sed -n 's/^SGLANG_DEEPEP_V2_NUM_SMS=//p'"; }
-if running "$D0" kimi-k3-decode && running "$D1" kimi-k3-decode \
-   && [[ "$(dec_sms "$D0")" == "$first_sms" && "$(dec_sms "$D1")" == "$first_sms" ]]; then
+cenv() { sshx "$1" "docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' $2 2>/dev/null | sed -n 's/^$3=//p'"; }
+dec_ok() { [[ "$(cenv "$1" kimi-k3-decode SGLANG_DEEPEP_V2_NUM_SMS)" == "$first_sms" \
+              && "$(cenv "$1" kimi-k3-decode DECODE_ATTN)" == "$DECODE_ATTN" ]]; }
+if running "$D0" kimi-k3-decode && running "$D1" kimi-k3-decode && dec_ok "$D0" && dec_ok "$D1"; then
     say "### decode containers already running on $D0+$D1 with sms=$first_sms -- reusing for the first run"
 else
     say "### decode TP16/EP16 on $D0+$D1 for the first run (sms=$first_sms), in parallel with prefill"
@@ -107,7 +117,7 @@ WAIT_CONTAINER=kimi-k3-prefill wait_ready "$P0" "$PORT" "prefill on $P0" || exit
 
 for rep in $(seq 1 "$REPS"); do
     for sms in $SMS_LIST; do
-        label="sms${sms}_r${rep}"
+        label="${DECODE_ATTN}_sms${sms}_r${rep}"
         say ""
         say "### decode TP16/EP16 on $D0+$D1, DECODE_DEEPEP_NUM_SMS=$sms  ($label, $(date -u +%FT%TZ))"
         if (( prelaunched )); then
@@ -141,7 +151,7 @@ for rep in $(seq 1 "$REPS"); do
         grep -q '"content"' "$LOCAL_RESULTS/logs/smoke_${label}.txt" \
             || { say "FATAL: smoke test returned no completion -- $LOCAL_RESULTS/logs/smoke_${label}.txt"; exit 1; }
 
-        sshx "$P0" "cd $REMOTE && ISL=$ISL OSL=$OSL CAPD=$CAPD MAXRUN_D=$MAXRUN_D SPEC=$SPEC ${CONCS:+CONCS='$CONCS'} REQ_SMS=$sms RESOLVED_SMS=$vals REP=$rep IMAGE=$IMAGE bash 92_sm_bench.sh" 2>&1 | tee -a "$SUMMARY"
+        sshx "$P0" "cd $REMOTE && ISL=$ISL OSL=$OSL CAPD=$CAPD MAXRUN_D=$MAXRUN_D SPEC=$SPEC ATTN=$DECODE_ATTN ${CONCS:+CONCS='$CONCS'} REQ_SMS=$sms RESOLVED_SMS=$vals REP=$rep IMAGE=$IMAGE bash 92_sm_bench.sh" 2>&1 | tee -a "$SUMMARY"
         rc=${PIPESTATUS[0]}
         rsync -az "$P0:$REMOTE/results/" "$LOCAL_RESULTS/" && say "  pulled <- $P0"
         for h in $D0 $D1; do

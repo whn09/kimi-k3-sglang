@@ -90,7 +90,7 @@ DRAFT_MODEL_PATH="${DRAFT_MODEL_PATH:-/models/Kimi-K3-DSpark}"
 K3_REGION="${K3_REGION:-ap-south-2}"   # not AWS_REGION: a laptop-side one would retarget the registry
 ECR_REGISTRY="${ECR_REGISTRY:-579019700964.dkr.ecr.${K3_REGION}.amazonaws.com}"
 ECR_REPO="${ECR_REPO:-kimi-k3-sglang-b300}"
-IMAGE_TAG="${IMAGE_TAG:-sgl07c8f729-deepep6de427b-nccl2312-efa1.50.0-smslog1}"
+IMAGE_TAG="${IMAGE_TAG:-sgla6a8c560-deepep6de427b-nccl2312-efa1.50.0-smslog1}"
 IMAGE="${IMAGE:-${ECR_REGISTRY}/${ECR_REPO}:${IMAGE_TAG}}"
 
 # ---- serving profile ----
@@ -962,7 +962,7 @@ require_efa_image() {
     if [[ "${MOE_A2A_BACKEND:-deepep_v2}" == "deepep_v2" ]]; then
         if ! docker run --rm --entrypoint bash "$img" -c \
             'SGL=$(python3 -c "import sglang,os;print(os.path.dirname(sglang.__file__))");
-             grep -q KimiK3ForConditionalGeneration "$SGL/srt/arg_groups/moe_hook.py" &&
+             grep -qs KimiK3ForConditionalGeneration "$SGL/srt/arg_groups/moe_hook.py" "$SGL/srt/configs/moe_model_registry.py" &&
              grep -q is_deepep_v2 "$SGL/srt/models/kimi_k3.py"' 2>/dev/null; then
             echo "ERROR: '$img' is missing the DeepEP v2 patches for K3." >&2
             echo "       This image would SERVE WRONG NUMERICS, not fail." >&2

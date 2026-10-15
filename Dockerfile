@@ -44,7 +44,14 @@
 # nothing to attach to there. Pinned by digest-bearing tag on purpose: the
 # patches are line-context diffs against this exact tree, and a floating
 # `nightly-dev` would break them silently-looking-loudly at build time.
-ARG SGLANG_BASE=lmsysorg/sglang:nightly-dev-cu13-20260901-07c8f729
+# 2026-10-15: 20260901-07c8f729 -> 20261015-a6a8c560 (sglang main, 2562 commits
+# later; K3 now runs through stage boundaries). The patch set follows the base:
+#   K3_PATCHSET=main    patches/k3_deepep_v2_main.py (4 re-cut patches; the
+#                       ep_scatter_from_psum bug is fixed upstream)
+#   K3_PATCHSET=legacy  the five patches/*.diff, for the 0901 base only
+# Override both together to rebuild the old generation:
+#   --build-arg SGLANG_BASE=lmsysorg/sglang:nightly-dev-cu13-20260901-07c8f729 --build-arg K3_PATCHSET=legacy
+ARG SGLANG_BASE=lmsysorg/sglang:nightly-dev-cu13-20261015-a6a8c560
 FROM ${SGLANG_BASE}
 
 USER root
@@ -389,9 +396,11 @@ print(len({d.metadata['Name'] for d in distributions() \
 # FAIL THE BUILD. A build break here is the intended signal to go check whether
 # the corresponding PR merged and drop that diff.
 COPY patches/ /opt/k3-patches/
+ARG K3_PATCHSET=main
+ENV K3_PATCHSET=${K3_PATCHSET}
 RUN set -eu; \
     SGL=$(python3 -c "import sglang, os; print(os.path.dirname(sglang.__file__))"); \
-    echo "sglang tree: $SGL"; \
+    echo "sglang tree: $SGL  patchset: $K3_PATCHSET"; \
     apply_one() { \
       diff_file="/opt/k3-patches/$1"; target="$SGL/$2"; \
       test -f "$target" || { echo "FATAL: patch target missing: $target"; exit 1; }; \
@@ -406,12 +415,16 @@ RUN set -eu; \
         exit 1; \
       fi; \
     }; \
-    apply_one moe_hook.diff        srt/arg_groups/moe_hook.py; \
-    apply_one kimi_k3.diff         srt/models/kimi_k3.py; \
-    apply_one fmt_layer.diff       srt/layers/moe/fused_moe_triton/layer.py; \
-    apply_one mr_deep_gemm.diff    srt/layers/moe/moe_runner/deep_gemm.py; \
-    apply_one ep_moe_kernels.diff  kernels/ops/moe/ep_moe_kernels.py; \
-    echo "all five DeepEP v2 patches accounted for"; \
+    if [ "$K3_PATCHSET" = legacy ]; then \
+      apply_one moe_hook.diff        srt/arg_groups/moe_hook.py; \
+      apply_one kimi_k3.diff         srt/models/kimi_k3.py; \
+      apply_one fmt_layer.diff       srt/layers/moe/fused_moe_triton/layer.py; \
+      apply_one mr_deep_gemm.diff    srt/layers/moe/moe_runner/deep_gemm.py; \
+      apply_one ep_moe_kernels.diff  kernels/ops/moe/ep_moe_kernels.py; \
+      echo "all five DeepEP v2 patches accounted for"; \
+    else \
+      python3 /opt/k3-patches/k3_deepep_v2_main.py "$SGL"; \
+    fi; \
     python3 /opt/k3-patches/deepep_v2_log_sms.py "$SGL"
 
 # ---- build-time sanity checks ----
@@ -476,8 +489,8 @@ RUN set -eu; \
 # from is recorded, then print the sha so a run log names its own kernels.
 RUN set -eu; \
     SGL=$(python3 -c "import sglang, os; print(os.path.dirname(sglang.__file__))"); \
-    grep -q "KimiK3ForConditionalGeneration" "$SGL/srt/arg_groups/moe_hook.py" \
-      || { echo "FATAL: K3 is not in the deepep_v2 whitelist -- moe_hook patch did not land"; exit 1; }; \
+    grep -q "KimiK3ForConditionalGeneration" "$SGL/srt/arg_groups/moe_hook.py" "$SGL/srt/configs/moe_model_registry.py" 2>/dev/null \
+      || { echo "FATAL: K3 is not in the deepep_v2 whitelist/registry -- the patch did not land"; exit 1; }; \
     grep -q "\[k3-sms\]" "$SGL/srt/layers/moe/token_dispatcher/deepep_v2.py" \
       || { echo "FATAL: the SM-logging patch did not land -- an auto-SM run could not report its count"; exit 1; }; \
     grep -q "is_deepep_v2" "$SGL/srt/models/kimi_k3.py" \

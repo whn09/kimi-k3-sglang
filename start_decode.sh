@@ -44,6 +44,22 @@ RADIX_ARGS=()
 # where the flag is omitted rather than passed as 1.
 DCP_ARGS=()
 [[ "${DCP_SIZE:-8}" -gt 1 ]] && DCP_ARGS=(--dcp-size "$DCP_SIZE")
+# DECODE_ATTN picks how decode ATTENTION is parallelised over the TP group; the
+# MoE is EP=TP over the DeepEP v2 a2a in every case.
+#   tp   attention TP over all ranks (cross-node at TP16): per-layer TP
+#        collectives on top of the a2a. The pd2x2 default.
+#   dp   --enable-dp-attention --dp-size TP: each rank serves its own requests
+#        with full attention, like vLLM's DP16 decode; no attention collectives.
+#   dcp  --dcp-size TP: still TP, but the KV cache is split along the sequence
+#        (capacity, not speed: it ADDS an LSE all-gather per layer). Prefill
+#        must run the same dcp -- see DCP_ARGS in start_prefill.sh.
+ATTN_ARGS=()
+case "${DECODE_ATTN:-tp}" in
+    tp)  ;;
+    dp)  ATTN_ARGS=(--enable-dp-attention --dp-size "$TP_SIZE") ;;
+    dcp) DCP_ARGS=(--dcp-size "$TP_SIZE") ;;
+    *)   echo "FATAL: DECODE_ATTN must be tp|dp|dcp, got '${DECODE_ATTN}'" >&2; exit 1 ;;
+esac
 
 # ---- DeepEP v2 (intra-node EP) ----
 EP_ARGS=()
@@ -157,7 +173,7 @@ echo "=== Kimi-K3 DECODE: TP=${TP_SIZE} ep=${EP_SIZE:-1} mode=${DEEPEP_V2_MODE:-
      "cap=${SGLANG_DEEPEP_V2_NUM_MAX_DISPATCH_TOKENS_PER_RANK:-n/a}" \
      "gin=${NCCL_GIN_TYPE:-unset} graphs=ON max-bs=${CGMAXBS:-<sglang default>}" \
      "max-run=${MAXRUN:-<DSPARK 48>} dcp=${DCP_SIZE:-8} mem=${MEM_FRACTION:-0.85}" \
-     "deepep-sms=${SGLANG_DEEPEP_V2_NUM_SMS:-0}(0=auto) metrics=${ENABLE_METRICS:-1} ==="
+     "deepep-sms=${SGLANG_DEEPEP_V2_NUM_SMS:-0}(0=auto) metrics=${ENABLE_METRICS:-1} attn=${DECODE_ATTN:-tp} ==="
 
 # Prometheus /metrics on the HTTP port. The SM sweep's decode sampler reads
 # sglang:num_running_reqs / sglang:gen_throughput from it to prove decode was full.
@@ -170,6 +186,7 @@ exec python3 -m sglang.launch_server \
     --trust-remote-code \
     --tp-size "$TP_SIZE" \
     "${DCP_ARGS[@]}" \
+    "${ATTN_ARGS[@]}" \
     --mem-fraction-static "${MEM_FRACTION:-0.85}" \
     --chunked-prefill-size "${CHUNKED_PREFILL:-1024}" \
     --disaggregation-decode-extra-slots "${DECODE_EXTRA_SLOTS:-16}" \
