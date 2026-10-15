@@ -1,0 +1,62 @@
+NNODES=1: PREFILL_MEM_FRACTION 0.85 -> 0.92 (TP=8 keeps full weights; 0.85 leaves no KV pool)
+plan: attn=dp (prefill dcp=1, decode mem=0.86) sms=[0] x reps=1  spec=off  decode cap=512 maxrun=512  ISL/OSL=1024/2048  concs=[<92_sm_bench default>]
+image: 579019700964.dkr.ecr.ap-south-2.amazonaws.com/kimi-k3-sglang-b300:sgla6a8c560-deepep6de427b-nccl2312-efa1.50.0-smslog1
+Warning: Permanently added 'ec2-16-112-214-62.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-113-24-47.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-112-254-124.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-113-127-156.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-112-214-62.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-113-24-47.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-112-254-124.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-113-127-156.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-112-214-62.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-113-24-47.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-112-214-62.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+### prefill containers already running on B300-1+B300-2 -- reusing (they must have spec=off)
+Warning: Permanently added 'ec2-16-112-214-62.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-112-254-124.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-113-127-156.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-112-254-124.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+### decode TP16/EP16 on B300-3+B300-4 for the first run (sms=0), in parallel with prefill
+Warning: Permanently added 'ec2-16-112-214-62.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+  gpus free: B300-3
+  gpus free: B300-4
+    Warning: Permanently added 'ec2-16-112-254-124.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    NNODES=2: deepep_v2 mode direct -> hybrid (direct is intra-node only)
+    NNODES=2: custom all-reduce off (it is an intra-node P2P path)
+    NNODES=2: DECODE_MEM_FRACTION 0.85 -> 0.78 (TP=16 has a bigger KV pool)
+    DeepEP v2: ep=16 mode=hybrid runner=deep_gemm cap=512 gin=5 hca=rdmap
+    d444b08a7588b29be481c0076b9a2a53634e27218a60e954709ecda9d0d28878
+    launched 'kimi-k3-decode' (profile=low-latency, mem=0.86, dcp=1, mamba=0.17, symm=on)  ->  docker logs -f kimi-k3-decode
+      a2a=deepep_v2 ep=16 mode=hybrid cap=512 chunk=512 decode-graphs=ON max-bs=512 max-run=512 deepep-sms=0(0=auto) spec=off attn=dp
+      tp=16 over 2 nodes, this host is node-rank 0, rendezvous 172.31.0.212:29500
+      (rank != 0 never binds :30000 -- do not wait for 'server is fired up' there)
+    Warning: Permanently added 'ec2-16-113-127-156.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    NNODES=2: deepep_v2 mode direct -> hybrid (direct is intra-node only)
+    NNODES=2: custom all-reduce off (it is an intra-node P2P path)
+    NNODES=2: DECODE_MEM_FRACTION 0.85 -> 0.78 (TP=16 has a bigger KV pool)
+    DeepEP v2: ep=16 mode=hybrid runner=deep_gemm cap=512 gin=5 hca=rdmap
+    09e608af988c44c812d7ca0f91cf28db640c74afd951f84aa429448d9b0b7419
+    launched 'kimi-k3-decode' (profile=low-latency, mem=0.86, dcp=1, mamba=0.17, symm=on)  ->  docker logs -f kimi-k3-decode
+      a2a=deepep_v2 ep=16 mode=hybrid cap=512 chunk=512 decode-graphs=ON max-bs=512 max-run=512 deepep-sms=0(0=auto) spec=off attn=dp
+      tp=16 over 2 nodes, this host is node-rank 1, rendezvous 172.31.0.212:29500
+      (rank != 0 never binds :30000 -- do not wait for 'server is fired up' there)
+  ready: prefill on B300-1 after 30s
+
+### decode TP16/EP16 on B300-3+B300-4, DECODE_DEEPEP_NUM_SMS=0  (dp_sms0_r1, 2026-10-15T07:54:04Z)
+  DIED: decode on B300-3 -- kimi-k3-decode on B300-3 is 'exited' after 90s
+        File "/sgl-workspace/sglang/python/sglang/srt/managers/data_parallel_controller.py", line 802, in launch_tensor_parallel_group
+          scheduler_info.append(scheduler_pipe_readers[i].recv())
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "/opt/python/cpython-3.12.15-linux-x86_64-gnu/lib/python3.12/multiprocessing/connection.py", line 250, in recv
+          buf = self._recv_bytes()
+                ^^^^^^^^^^^^^^^^^^
+        File "/opt/python/cpython-3.12.15-linux-x86_64-gnu/lib/python3.12/multiprocessing/connection.py", line 430, in _recv_bytes
+          buf = self._recv(4)
+                ^^^^^^^^^^^^^
+        File "/opt/python/cpython-3.12.15-linux-x86_64-gnu/lib/python3.12/multiprocessing/connection.py", line 399, in _recv
+          raise EOFError
+      EOFError
+      
+      [2026-10-15 07:54:58] Received sigquit from a child process. It usually means the child failed.
+      [2026-10-15 07:54:58] kill_process_tree called: parent_pid=387, include_parent=True, pid=387
