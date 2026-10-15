@@ -67,28 +67,48 @@ for h in $P0 $P1 $D0 $D1; do
     [[ "$got" == "$want" ]] || { say "FATAL: $h is $got, env_common.sh says $want -- refresh B300_*_IP"; exit 1; }
 done
 
-# ---- prefill (once) ----
-if sshx "$P0" "curl -sf -m 5 http://localhost:$PORT/health >/dev/null"; then
-    say "### prefill already healthy on $P0 -- reusing (it must have been launched with spec=$SPEC)"
+launch_decode() {   # launch_decode <sms>
+    sshx "$P0" "docker rm -f kimi-k3-router >/dev/null 2>&1 || true"
+    teardown_all $D0 $D1
+    preflight_free_gpus $D0 $D1 || exit 1
+    sshx "$D0" "cd $REMOTE && $DENV DECODE_DEEPEP_NUM_SMS=$1 NODE_RANK=0 bash 21_launch_decode.sh" 2>&1 | sed 's/^/    /' | tee -a "$SUMMARY"
+    sshx "$D1" "cd $REMOTE && $DENV DECODE_DEEPEP_NUM_SMS=$1 NODE_RANK=1 bash 21_launch_decode.sh" 2>&1 | sed 's/^/    /' | tee -a "$SUMMARY"
+}
+
+running() {   # running <host> <container>
+    [[ "$(sshx "$1" "docker inspect -f '{{.State.Status}}' $2 2>/dev/null")" == running ]]
+}
+
+# ---- prefill (once) and the FIRST decode, booted in parallel ----
+# Decode does not need prefill up to boot -- it learns the prefill address per
+# request from the bootstrap info -- so the two ~10 min cold boots overlap.
+# A prefill that is already healthy OR still booting (both ranks' containers
+# running) is reused, never relaunched: a relaunch throws away its JIT warmup.
+first_sms="${SMS_LIST%% *}"
+if running "$P0" kimi-k3-prefill && running "$P1" kimi-k3-prefill; then
+    say "### prefill containers already running on $P0+$P1 -- reusing (they must have spec=$SPEC)"
 else
-    teardown_all $P0 $P1 $D0 $D1
-    preflight_free_gpus $P0 $P1 $D0 $D1 || exit 1
+    teardown_all $P0 $P1
+    preflight_free_gpus $P0 $P1 || exit 1
     say "### prefill TP16/EP16 on $P0+$P1"
     sshx "$P0" "cd $REMOTE && $PENV NODE_RANK=0 bash 20_launch_prefill.sh" 2>&1 | sed 's/^/    /' | tee -a "$SUMMARY"
     sshx "$P1" "cd $REMOTE && $PENV NODE_RANK=1 bash 20_launch_prefill.sh" 2>&1 | sed 's/^/    /' | tee -a "$SUMMARY"
-    WAIT_CONTAINER=kimi-k3-prefill wait_ready "$P0" "$PORT" "prefill on $P0" || exit 1
 fi
+say "### decode TP16/EP16 on $D0+$D1 for the first run (sms=$first_sms), in parallel with prefill"
+launch_decode "$first_sms"
+prelaunched=1
+WAIT_CONTAINER=kimi-k3-prefill wait_ready "$P0" "$PORT" "prefill on $P0" || exit 1
 
 for rep in $(seq 1 "$REPS"); do
     for sms in $SMS_LIST; do
         label="sms${sms}_r${rep}"
         say ""
         say "### decode TP16/EP16 on $D0+$D1, DECODE_DEEPEP_NUM_SMS=$sms  ($label, $(date -u +%FT%TZ))"
-        sshx "$P0" "docker rm -f kimi-k3-router >/dev/null 2>&1 || true"
-        teardown_all $D0 $D1
-        preflight_free_gpus $D0 $D1 || exit 1
-        sshx "$D0" "cd $REMOTE && $DENV DECODE_DEEPEP_NUM_SMS=$sms NODE_RANK=0 bash 21_launch_decode.sh" 2>&1 | sed 's/^/    /' | tee -a "$SUMMARY"
-        sshx "$D1" "cd $REMOTE && $DENV DECODE_DEEPEP_NUM_SMS=$sms NODE_RANK=1 bash 21_launch_decode.sh" 2>&1 | sed 's/^/    /' | tee -a "$SUMMARY"
+        if (( prelaunched )); then
+            prelaunched=0     # booted above, alongside prefill
+        else
+            launch_decode "$sms"
+        fi
         WAIT_CONTAINER=kimi-k3-decode wait_ready "$D0" "$PORT" "decode on $D0" || exit 1
 
         # The SM count every rank really uses (patches/deepep_v2_log_sms.py).
