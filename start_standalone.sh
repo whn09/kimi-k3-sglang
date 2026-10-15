@@ -12,6 +12,7 @@ set -euo pipefail
 
 source /host/kimi-k3-sglang/env_common.sh
 setup_runtime_env
+prewarm_remote_code
 
 # Empty at NNODES=1. Fails fast (rather than hanging for --dist-timeout) when the
 # rendezvous address is missing or TP does not divide over the nodes.

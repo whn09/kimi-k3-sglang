@@ -830,6 +830,30 @@ setup_runtime_env() {
     export SGLANG_LOAD_TIMEOUT="${SGLANG_LOAD_TIMEOUT:-7200}"
 }
 
+# Populate the HF dynamic-module cache ONCE, serially, before sglang forks its
+# schedulers. Every scheduler calls AutoProcessor/AutoConfig with
+# trust_remote_code, and each copies Kimi-K3's *.py into the same
+# ~/.cache/huggingface/modules/transformers_modules/... directory. Under DP
+# attention 16 processes do it at once and one of them imports a half-written
+# kimi_k3_processor.py: "module ... has no attribute 'KimiK3Processor'"
+# (2026-10-15, B300-4, DP8) -- the boot dies, and a different boot of the same
+# config succeeds. Best effort: a failure here is reported, not fatal, because
+# the server would hit (and print) the real error itself.
+prewarm_remote_code() {
+    python3 - "$MODEL_PATH" <<'PY' || echo "WARN: remote-code prewarm failed; sglang will retry it per process" >&2
+import sys
+from transformers import AutoConfig, AutoProcessor, AutoTokenizer
+p = sys.argv[1]
+AutoConfig.from_pretrained(p, trust_remote_code=True)
+AutoTokenizer.from_pretrained(p, trust_remote_code=True)
+try:
+    AutoProcessor.from_pretrained(p, trust_remote_code=True)
+except Exception as e:  # text-only paths may not need it
+    print(f"prewarm: AutoProcessor skipped: {e}", file=sys.stderr)
+print("prewarm: HF dynamic modules cached")
+PY
+}
+
 # Echo the CAP a RUNNING container was actually given, or "unknown".
 #
 # This has to come from .Config.Env, not from the profile variables above and not
