@@ -3,6 +3,35 @@
 Serving `moonshotai/Kimi-K3` on p6-b300 nodes (8x B300 275 GB, sm_103), first
 single-node then 1P1D prefill/decode disaggregation over EFA.
 
+## Decode SM count: 12 vs auto (`96_sm_sweep.sh`, 2026-10-15)
+
+Same method as `kimi-k3-vllm/94_sm_sweep.sh`. sglang already passes
+`SGLANG_DEEPEP_V2_NUM_SMS` to `ElasticBuffer.dispatch` (combine reuses the
+dispatch handle's count), but its default 0 lets DeepEP pick, and because sglang
+builds the buffer with `prefer_overlap_with_compute=False` that pick is
+**max(theory, 64)**. Every DeepEP v2 number in this README before this section
+ran at >= 64 SMs. `patches/deepep_v2_log_sms.py` only adds a `[k3-sms]` log
+line with the count each rank resolved.
+
+```bash
+bash 96_sm_sweep.sh                    # SMS_LIST="12 0" REPS=2, interleaved
+CONCS=512 REPS=3 bash 96_sm_sweep.sh   # only the decode-full point
+python3 gen_sm_table.py results/
+```
+
+- Topology = `pd2x2`: prefill TP16/EP16 on B300-1+2 (booted once, DeepEP's own
+  SM pick), decode TP16/EP16 on B300-3+4 (`DECODE_DEEPEP_NUM_SMS`, rebooted per run).
+- Spec decoding OFF by default (`NO_SPEC=1`) to match the vLLM run; decode
+  `CAP=MAXRUN=CGMAXBS=512`, ISL 1024 / OSL 2048, conc 128 / 256 / 512.
+- `decode_sampler.py` reads the decode's `/metrics` (`--enable-metrics` is now
+  on); the headline is `sglang:gen_throughput` over the window where
+  `num_running_reqs` >= 90% of target, else `NOT FULL`.
+- The sweep aborts unless all 16 decode ranks log the same SM count and a
+  requested count is the one in use.
+- Image: `kimi-k3-sglang-b300:sgl07c8f729-deepep6de427b-nccl2312-efa1.50.0-smslog1`
+  in ECR **ap-south-2** (`01_build_push.sh`). DeepEP moved 97d8f9b -> 6de427b,
+  so it is a new image generation: do not mix its rows with the nccl2312 ones.
+
 ## Model
 
 | | |
