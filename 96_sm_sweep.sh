@@ -125,7 +125,8 @@ for rep in $(seq 1 "$REPS"); do
             | grep -o 'dispatch num_sms=[0-9]* (SGLANG_DEEPEP_V2_NUM_SMS=[0-9]*) rank=[0-9]*')
         nranks=$(sed -n 's/.* rank=\([0-9]*\)$/\1/p' <<<"$lines" | sort -u | wc -l | tr -d ' ')
         vals=$(sed -n 's/^dispatch num_sms=\([0-9]*\) .*/\1/p' <<<"$lines" | sort -u)
-        if [[ "$nranks" != 16 || $(wc -l <<<"$vals") != 1 || -z "$vals" ]]; then
+        nvals=$(grep -c . <<<"$vals" || true)
+        if (( nranks != 16 || nvals != 1 )); then
             say "FATAL: [k3-sms] from $nranks/16 ranks, values '$(tr '\n' ' ' <<<"$vals")'"; exit 1
         fi
         if (( sms > 0 )) && [[ "$vals" != "$sms" ]]; then
