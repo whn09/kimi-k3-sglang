@@ -1,0 +1,157 @@
+plan: sms=[12 0] x reps=2  spec=off  decode cap=512 maxrun=512  ISL/OSL=1024/2048  concs=[<92_sm_bench default>]
+image: 579019700964.dkr.ecr.ap-south-2.amazonaws.com/kimi-k3-sglang-b300:sgl07c8f729-deepep6de427b-nccl2312-efa1.50.0-smslog1
+### prefill containers already running on B300-1+B300-2 -- reusing (they must have spec=off)
+### decode containers already running on B300-3+B300-4 with sms=12 -- reusing for the first run
+  ready: prefill on B300-1 after 30s
+
+### decode TP16/EP16 on B300-3+B300-4, DECODE_DEEPEP_NUM_SMS=12  (sms12_r1, 2026-10-15T03:06:57Z)
+  ready: decode on B300-3 after 30s
+  DeepEP resolved num_sms=12 on all 16 ranks (requested 12; 0 = auto)
+  note B300-3/kimi-k3-decode kv-pool: 2704064 tokens (69.63 GB) / 3072 per req = 880 resident; pool >= MAXRUN, admission is the limit
+    Warning: Permanently added 'ec2-16-112-214-62.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    NNODES=1: PREFILL_MEM_FRACTION 0.85 -> 0.92 (TP=8 keeps full weights; 0.85 leaves no KV pool)
+    single-node deepep_v2 mode=direct: GIN type 5 -> 3 (type 5 needs >1 node)
+    router  : 0.0.0.0:8080   (1P1D)  policy=round_robin
+    prefill : http://172.31.10.219:30000 (bootstrap 8998)
+    decode  : http://172.31.0.212:30000
+    34c6b37e16214921c0491672ab4082dae570f965e4fb0232c6abc5e7e98b1db8
+    launched 'kimi-k3-router'  ->  docker logs -f kimi-k3-router
+Warning: Permanently added 'ec2-16-112-214-62.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+== warmup (not saved as a result)
+NNODES=1: PREFILL_MEM_FRACTION 0.85 -> 0.92 (TP=8 keeps full weights; 0.85 leaves no KV pool)
+single-node deepep_v2 mode=direct: GIN type 5 -> 3 (type 5 needs >1 node)
+== k3s_pd2x2_dec-tp16ep16_sms12_specoff_cap512_run512_isl1024_osl2048_c128_n256_r1_20261015-031326  (resolved sms=12)
+Successful requests:                     256       
+Benchmark duration (s):                  371.51    
+Output token throughput (tok/s):         1411.25   
+Median TTFT (ms):                        8455.54   
+Median TPOT (ms):                        85.19     
+P99 TPOT (ms):                           85.44     
+Median ITL (ms):                         85.42     
+sampler: max_running=128/128 sat_window=343s sat_gen_tok_s=1495.5897681083175
+== k3s_pd2x2_dec-tp16ep16_sms12_specoff_cap512_run512_isl1024_osl2048_c256_n512_r1_20261015-032015  (resolved sms=12)
+Successful requests:                     512       
+Benchmark duration (s):                  398.05    
+Output token throughput (tok/s):         2634.26   
+Median TTFT (ms):                        1866.93   
+Median TPOT (ms):                        93.65     
+P99 TPOT (ms):                           93.87     
+Median ITL (ms):                         93.85     
+sampler: max_running=256/256 sat_window=369s sat_gen_tok_s=2717.857846066626
+== k3s_pd2x2_dec-tp16ep16_sms12_specoff_cap512_run512_isl1024_osl2048_c512_n1024_r1_20261015-032734  (resolved sms=12)
+Successful requests:                     1024      
+Benchmark duration (s):                  452.41    
+Output token throughput (tok/s):         4635.48   
+Median TTFT (ms):                        2043.01   
+Median TPOT (ms):                        103.81    
+P99 TPOT (ms):                           104.23    
+Median ITL (ms):                         104.22    
+sampler: max_running=512/512 sat_window=401s sat_gen_tok_s=4892.00104765367
+  pulled <- B300-1
+
+### decode TP16/EP16 on B300-3+B300-4, DECODE_DEEPEP_NUM_SMS=0  (sms0_r1, 2026-10-15T03:35:58Z)
+  gpus free: B300-3
+  gpus free: B300-4
+    Warning: Permanently added 'ec2-16-112-254-124.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    NNODES=2: deepep_v2 mode direct -> hybrid (direct is intra-node only)
+    NNODES=2: custom all-reduce off (it is an intra-node P2P path)
+    NNODES=2: DECODE_MEM_FRACTION 0.85 -> 0.78 (TP=16 has a bigger KV pool)
+    DeepEP v2: ep=16 mode=hybrid runner=deep_gemm cap=512 gin=5 hca=rdmap
+    a418b99ac3f605ebd912beeeff559eb39ed5494681aa60b48d7e3d5a68e6b2a3
+    launched 'kimi-k3-decode' (profile=low-latency, mem=0.78, dcp=1, mamba=0.17, symm=on)  ->  docker logs -f kimi-k3-decode
+      a2a=deepep_v2 ep=16 mode=hybrid cap=512 chunk=512 decode-graphs=ON max-bs=512 max-run=512 deepep-sms=0(0=auto) spec=off
+      tp=16 over 2 nodes, this host is node-rank 0, rendezvous 172.31.0.212:29500
+      (rank != 0 never binds :30000 -- do not wait for 'server is fired up' there)
+    Warning: Permanently added 'ec2-16-113-127-156.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    NNODES=2: deepep_v2 mode direct -> hybrid (direct is intra-node only)
+    NNODES=2: custom all-reduce off (it is an intra-node P2P path)
+    NNODES=2: DECODE_MEM_FRACTION 0.85 -> 0.78 (TP=16 has a bigger KV pool)
+    DeepEP v2: ep=16 mode=hybrid runner=deep_gemm cap=512 gin=5 hca=rdmap
+    1f8cb0472b0c46cd394bffc8e104f2cb1880973698fcab90d8f239fee8301020
+    launched 'kimi-k3-decode' (profile=low-latency, mem=0.78, dcp=1, mamba=0.17, symm=on)  ->  docker logs -f kimi-k3-decode
+      a2a=deepep_v2 ep=16 mode=hybrid cap=512 chunk=512 decode-graphs=ON max-bs=512 max-run=512 deepep-sms=0(0=auto) spec=off
+      tp=16 over 2 nodes, this host is node-rank 1, rendezvous 172.31.0.212:29500
+      (rank != 0 never binds :30000 -- do not wait for 'server is fired up' there)
+  ready: decode on B300-3 after 300s
+  DeepEP resolved num_sms=64 on all 16 ranks (requested 0; 0 = auto)
+  note B300-3/kimi-k3-decode kv-pool: 2704064 tokens (69.63 GB) / 3072 per req = 880 resident; pool >= MAXRUN, admission is the limit
+    Warning: Permanently added 'ec2-16-112-214-62.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    NNODES=1: PREFILL_MEM_FRACTION 0.85 -> 0.92 (TP=8 keeps full weights; 0.85 leaves no KV pool)
+    single-node deepep_v2 mode=direct: GIN type 5 -> 3 (type 5 needs >1 node)
+    router  : 0.0.0.0:8080   (1P1D)  policy=round_robin
+    prefill : http://172.31.10.219:30000 (bootstrap 8998)
+    decode  : http://172.31.0.212:30000
+    3386c97d8ba7c9b09571c3d9fe3e3a6adede060dcc562166150d898f95adb8e1
+    launched 'kimi-k3-router'  ->  docker logs -f kimi-k3-router
+Warning: Permanently added 'ec2-16-112-214-62.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+NNODES=1: PREFILL_MEM_FRACTION 0.85 -> 0.92 (TP=8 keeps full weights; 0.85 leaves no KV pool)
+single-node deepep_v2 mode=direct: GIN type 5 -> 3 (type 5 needs >1 node)
+== warmup (not saved as a result)
+== k3s_pd2x2_dec-tp16ep16_sms0_specoff_cap512_run512_isl1024_osl2048_c128_n256_r1_20261015-034808  (resolved sms=64)
+Successful requests:                     256       
+Benchmark duration (s):                  380.49    
+Output token throughput (tok/s):         1377.94   
+Median TTFT (ms):                        1998.00   
+Median TPOT (ms):                        90.67     
+P99 TPOT (ms):                           90.91     
+Median ITL (ms):                         90.85     
+sampler: max_running=128/128 sat_window=359s sat_gen_tok_s=1408.3707525163384
+== k3s_pd2x2_dec-tp16ep16_sms0_specoff_cap512_run512_isl1024_osl2048_c256_n512_r1_20261015-035508  (resolved sms=64)
+Successful requests:                     512       
+Benchmark duration (s):                  434.47    
+Output token throughput (tok/s):         2413.44   
+Median TTFT (ms):                        1907.72   
+Median TPOT (ms):                        102.53    
+P99 TPOT (ms):                           102.94    
+Median ITL (ms):                         102.60    
+sampler: max_running=256/256 sat_window=404s sat_gen_tok_s=2481.2480624317755
+== k3s_pd2x2_dec-tp16ep16_sms0_specoff_cap512_run512_isl1024_osl2048_c512_n1024_r1_20261015-040303  (resolved sms=64)
+Successful requests:                     1024      
+Benchmark duration (s):                  494.74    
+Output token throughput (tok/s):         4238.87   
+Median TTFT (ms):                        1987.78   
+Median TPOT (ms):                        114.22    
+P99 TPOT (ms):                           114.75    
+Median ITL (ms):                         114.51    
+sampler: max_running=512/512 sat_window=440s sat_gen_tok_s=4451.371949723758
+  pulled <- B300-1
+
+### decode TP16/EP16 on B300-3+B300-4, DECODE_DEEPEP_NUM_SMS=12  (sms12_r2, 2026-10-15T04:12:09Z)
+  gpus free: B300-3
+  gpus free: B300-4
+    Warning: Permanently added 'ec2-16-112-254-124.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    NNODES=2: deepep_v2 mode direct -> hybrid (direct is intra-node only)
+    NNODES=2: custom all-reduce off (it is an intra-node P2P path)
+    NNODES=2: DECODE_MEM_FRACTION 0.85 -> 0.78 (TP=16 has a bigger KV pool)
+    DeepEP v2: ep=16 mode=hybrid runner=deep_gemm cap=512 gin=5 hca=rdmap
+    3cc5a41710c3567d5c49bdf573734f0674c1ebf3bb271e705de98995160f9fbc
+    launched 'kimi-k3-decode' (profile=low-latency, mem=0.78, dcp=1, mamba=0.17, symm=on)  ->  docker logs -f kimi-k3-decode
+      a2a=deepep_v2 ep=16 mode=hybrid cap=512 chunk=512 decode-graphs=ON max-bs=512 max-run=512 deepep-sms=12(0=auto) spec=off
+      tp=16 over 2 nodes, this host is node-rank 0, rendezvous 172.31.0.212:29500
+      (rank != 0 never binds :30000 -- do not wait for 'server is fired up' there)
+    Warning: Permanently added 'ec2-16-113-127-156.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    NNODES=2: deepep_v2 mode direct -> hybrid (direct is intra-node only)
+    NNODES=2: custom all-reduce off (it is an intra-node P2P path)
+    NNODES=2: DECODE_MEM_FRACTION 0.85 -> 0.78 (TP=16 has a bigger KV pool)
+    DeepEP v2: ep=16 mode=hybrid runner=deep_gemm cap=512 gin=5 hca=rdmap
+    9caae4d95b3435cb4bc4a14d371ee6957b5633db8360eeb839e1c764c700e3eb
+    launched 'kimi-k3-decode' (profile=low-latency, mem=0.78, dcp=1, mamba=0.17, symm=on)  ->  docker logs -f kimi-k3-decode
+      a2a=deepep_v2 ep=16 mode=hybrid cap=512 chunk=512 decode-graphs=ON max-bs=512 max-run=512 deepep-sms=12(0=auto) spec=off
+      tp=16 over 2 nodes, this host is node-rank 1, rendezvous 172.31.0.212:29500
+      (rank != 0 never binds :30000 -- do not wait for 'server is fired up' there)
+  ready: decode on B300-3 after 300s
+  DeepEP resolved num_sms=12 on all 16 ranks (requested 12; 0 = auto)
+  note B300-3/kimi-k3-decode kv-pool: 2704064 tokens (69.63 GB) / 3072 per req = 880 resident; pool >= MAXRUN, admission is the limit
+    Warning: Permanently added 'ec2-16-112-214-62.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    NNODES=1: PREFILL_MEM_FRACTION 0.85 -> 0.92 (TP=8 keeps full weights; 0.85 leaves no KV pool)
+    single-node deepep_v2 mode=direct: GIN type 5 -> 3 (type 5 needs >1 node)
+    router  : 0.0.0.0:8080   (1P1D)  policy=round_robin
+    prefill : http://172.31.10.219:30000 (bootstrap 8998)
+    decode  : http://172.31.0.212:30000
+    48e9d7a1443f7f7be06cd9e093293814bd339e0a4b05069efa4dab48a2736efd
+    launched 'kimi-k3-router'  ->  docker logs -f kimi-k3-router
+Warning: Permanently added 'ec2-16-112-214-62.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+NNODES=1: PREFILL_MEM_FRACTION 0.85 -> 0.92 (TP=8 keeps full weights; 0.85 leaves no KV pool)
+single-node deepep_v2 mode=direct: GIN type 5 -> 3 (type 5 needs >1 node)
+== warmup (not saved as a result)
+== k3s_pd2x2_dec-tp16ep16_sms12_specoff_cap512_run512_isl1024_osl2048_c128_n256_r2_20261015-042348  (resolved sms=12)
