@@ -1,0 +1,84 @@
+NNODES=1: PREFILL_MEM_FRACTION 0.85 -> 0.92 (TP=8 keeps full weights; 0.85 leaves no KV pool)
+plan: attn=tp (prefill dcp=1) sms=[12] x reps=1  spec=off  decode cap=512 maxrun=512  ISL/OSL=1024/2048  concs=[<92_sm_bench default>]
+image: 579019700964.dkr.ecr.ap-south-2.amazonaws.com/kimi-k3-sglang-b300:sgla6a8c560-deepep6de427b-nccl2312-efa1.50.0-smslog1
+Warning: Permanently added 'ec2-16-112-214-62.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-113-24-47.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-112-254-124.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-113-127-156.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-112-214-62.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-113-24-47.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-112-254-124.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-113-127-156.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-112-214-62.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+  gpus free: B300-1
+  gpus free: B300-2
+### prefill TP16/EP16 on B300-1+B300-2
+    Warning: Permanently added 'ec2-16-112-214-62.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    NNODES=2: deepep_v2 mode direct -> hybrid (direct is intra-node only)
+    NNODES=2: custom all-reduce off (it is an intra-node P2P path)
+    NNODES=2: PREFILL_MEM_FRACTION 0.85 -> 0.78 (TP=16 has a bigger KV pool)
+    DeepEP v2: ep=16 mode=hybrid runner=deep_gemm cap=8192 gin=5 hca=rdmap
+    224f78ba17f1849202cc30a60c7736bf72208e405c691685094b23463e0e92b7
+    launched 'kimi-k3-prefill' (profile=low-latency, mem=0.78, dcp=1, mamba=0.86, backend=mooncake)  ->  docker logs -f kimi-k3-prefill
+      a2a=deepep_v2 ep=16 mode=hybrid cap=8192 chunk=8192 decode-graphs=OFF
+      tp=16 over 2 nodes, this host is node-rank 0, rendezvous 172.31.10.219:29500
+      (rank != 0 never binds :30000 -- do not wait for 'server is fired up' there)
+    Warning: Permanently added 'ec2-16-113-24-47.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    NNODES=2: deepep_v2 mode direct -> hybrid (direct is intra-node only)
+    NNODES=2: custom all-reduce off (it is an intra-node P2P path)
+    NNODES=2: PREFILL_MEM_FRACTION 0.85 -> 0.78 (TP=16 has a bigger KV pool)
+    DeepEP v2: ep=16 mode=hybrid runner=deep_gemm cap=8192 gin=5 hca=rdmap
+    bf11dfc97eb33f096bd1d6df57aa22edb3a31e7ae06b90080e2e0438cf92fce0
+    launched 'kimi-k3-prefill' (profile=low-latency, mem=0.78, dcp=1, mamba=0.86, backend=mooncake)  ->  docker logs -f kimi-k3-prefill
+      a2a=deepep_v2 ep=16 mode=hybrid cap=8192 chunk=8192 decode-graphs=OFF
+      tp=16 over 2 nodes, this host is node-rank 1, rendezvous 172.31.10.219:29500
+      (rank != 0 never binds :30000 -- do not wait for 'server is fired up' there)
+Warning: Permanently added 'ec2-16-112-254-124.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+### decode TP16/EP16 on B300-3+B300-4 for the first run (sms=12), in parallel with prefill
+Warning: Permanently added 'ec2-16-112-214-62.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+  gpus free: B300-3
+  gpus free: B300-4
+    Warning: Permanently added 'ec2-16-112-254-124.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    NNODES=2: deepep_v2 mode direct -> hybrid (direct is intra-node only)
+    NNODES=2: custom all-reduce off (it is an intra-node P2P path)
+    NNODES=2: DECODE_MEM_FRACTION 0.85 -> 0.78 (TP=16 has a bigger KV pool)
+    DeepEP v2: ep=16 mode=hybrid runner=deep_gemm cap=512 gin=5 hca=rdmap
+    52cafea9ac877e3f80e17584e79a751317f6c8221d6b038028265f48932be0de
+    launched 'kimi-k3-decode' (profile=low-latency, mem=0.78, dcp=1, mamba=0.17, symm=on)  ->  docker logs -f kimi-k3-decode
+      a2a=deepep_v2 ep=16 mode=hybrid cap=512 chunk=512 decode-graphs=ON max-bs=512 max-run=512 deepep-sms=12(0=auto) spec=off attn=tp
+      tp=16 over 2 nodes, this host is node-rank 0, rendezvous 172.31.0.212:29500
+      (rank != 0 never binds :30000 -- do not wait for 'server is fired up' there)
+    Warning: Permanently added 'ec2-16-113-127-156.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    NNODES=2: deepep_v2 mode direct -> hybrid (direct is intra-node only)
+    NNODES=2: custom all-reduce off (it is an intra-node P2P path)
+    NNODES=2: DECODE_MEM_FRACTION 0.85 -> 0.78 (TP=16 has a bigger KV pool)
+    DeepEP v2: ep=16 mode=hybrid runner=deep_gemm cap=512 gin=5 hca=rdmap
+    b4ce2a5a15cd87d463a6bbc64ffc3b1cd729a186fada82aed371b12b1975ad23
+    launched 'kimi-k3-decode' (profile=low-latency, mem=0.78, dcp=1, mamba=0.17, symm=on)  ->  docker logs -f kimi-k3-decode
+      a2a=deepep_v2 ep=16 mode=hybrid cap=512 chunk=512 decode-graphs=ON max-bs=512 max-run=512 deepep-sms=12(0=auto) spec=off attn=tp
+      tp=16 over 2 nodes, this host is node-rank 1, rendezvous 172.31.0.212:29500
+      (rank != 0 never binds :30000 -- do not wait for 'server is fired up' there)
+  ready: prefill on B300-1 after 390s
+
+### decode TP16/EP16 on B300-3+B300-4, DECODE_DEEPEP_NUM_SMS=12  (tp_sms12_r1, 2026-10-15T05:39:21Z)
+  ready: decode on B300-3 after 30s
+Warning: Permanently added 'ec2-16-112-254-124.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-113-127-156.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+  DeepEP resolved num_sms=12 on all 16 ranks (requested 12; 0 = auto)
+  note B300-3/kimi-k3-decode kv-pool: 2575296 tokens (66.31 GB) / 3072 per req = 838 resident; pool >= MAXRUN, admission is the limit
+    Warning: Permanently added 'ec2-16-112-214-62.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    NNODES=1: PREFILL_MEM_FRACTION 0.85 -> 0.92 (TP=8 keeps full weights; 0.85 leaves no KV pool)
+    single-node deepep_v2 mode=direct: GIN type 5 -> 3 (type 5 needs >1 node)
+    router  : 0.0.0.0:8080   (1P1D)  policy=round_robin
+    prefill : http://172.31.10.219:30000 (bootstrap 8998)
+    decode  : http://172.31.0.212:30000
+    c927e494b2f0ac8de514d4a2bf94ca7cef138717d46700a70db1519f84ff9a01
+    launched 'kimi-k3-router'  ->  docker logs -f kimi-k3-router
+    Warning: Permanently added 'ec2-16-112-214-62.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    OK    'The capital of France is': top1 ' Paris' -0.3797 (ref ' Paris' -0.2957, |d|=0.0840) top5 overlap 5/5
+          continuation: ' Paris. The capital of Germany is Berlin. The capital of Italy is Rome. The capital of Spain is Madrid. The capital of Portugal is Lisbon. The capital'
+    OK    '2 + 2 =': top1 ' ' -0.1339 (ref ' ' -0.1493, |d|=0.0154) top5 overlap 5/5
+          continuation: ' 4\n- 2 + 2 = 4\n- 2 + 2 = 4\n- 2 + 2 = 4'
+    FAIL  'def fibonacci(n):': top1 ' \n' -1.6934 (ref ' \n' -1.5171, |d|=0.1763) top5 overlap 4/5
+          continuation: ' \n    if n <= 1: \n        return n \n    else: \n        return fibonacci(n-1) + fibonacci(n-2)'
+FATAL: numerics gate failed on tp_sms12_r1 -- not benchmarking a wrong model

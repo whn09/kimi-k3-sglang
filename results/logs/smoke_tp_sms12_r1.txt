@@ -1,0 +1,149 @@
+Warning: Permanently added 'ec2-16-112-214-62.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+NNODES=1: PREFILL_MEM_FRACTION 0.85 -> 0.92 (TP=8 keeps full weights; 0.85 leaves no KV pool)
+=== /health ===
+single-node deepep_v2 mode=direct: GIN type 5 -> 3 (type 5 needs >1 node)
+OK OK
+=== /get_model_info ===
+{
+    "model_path": "/models/Kimi-K3",
+    "served_model_name": "moonshotai/Kimi-K3",
+    "tokenizer_path": "/models/Kimi-K3",
+    "is_generation": true,
+    "preferred_sampling_params": null,
+    "weight_version": "default",
+    "load_format": "auto",
+    "reasoning_parser": "kimi_k3",
+    "tool_call_parser": "kimi_k3",
+    "disaggregation_mode": "prefill",
+    "has_image_understanding": true,
+    "has_audio_understanding": false,
+    "model_type": "kimi_k3",
+    "architectures": [
+        "KimiK3ForConditionalGeneration"
+    ],
+    "embedding": {
+        "family": "none",
+        "task": "none",
+        "execution": "none",
+        "attention": "none",
+        "pooling": "model_defined",
+        "normalize": false,
+        "postprocessor": "none",
+        "tokenizer_special_tokens": "model_default",
+        "supports_dimensions": false,
+        "supports_token_embeddings": false,
+        "supports_multimodal": false,
+        "requires_embedding_flag": false,
+        "auto_enable_embedding": false,
+        "bcg_eligibility": "disabled",
+        "safe_disable_kv_cache": false,
+        "safe_disable_radix_cache": false,
+        "safe_disable_chunked_prefill": false,
+        "enabled": false,
+        "matryoshka_dimensions": [],
+        "bcg": {
+            "prefill_backend": "disabled",
+            "enabled": false,
+            "capture_token_budget": 2048,
+            "capture_batch_sizes": [
+                4,
+                8,
+                12,
+                16,
+                20,
+                24,
+                28,
+                32,
+                48,
+                64,
+                80,
+                96,
+                112,
+                128,
+                144,
+                160,
+                176,
+                192,
+                208,
+                224,
+                240,
+                256,
+                288,
+                320,
+                352,
+                384,
+                416,
+                448,
+                480,
+                512,
+                576,
+                640,
+                704,
+                768,
+                832,
+                896,
+                960,
+                1024,
+                1280,
+                1536,
+                1792,
+                2048
+            ]
+        },
+        "cache": {
+            "kv_cache_disabled": false,
+            "radix_cache_disabled": true,
+            "chunked_prefill_disabled": false
+        }
+    }
+}
+
+=== chat completion ===
+{
+    "id": "d5a582bb8c9349008cf514971602ddd7",
+    "object": "chat.completion",
+    "created": 1792042802,
+    "model": "moonshotai/Kimi-K3",
+    "choices": [
+        {
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": "4318",
+                "reasoning_content": "127 * 34 = 127 * 34. Let me compute: 127 * 30 = 3810, 127 * 4 = 508. 3810 + 508 = 4318."
+            },
+            "logprobs": null,
+            "finish_reason": "stop",
+            "matched_stop": 163586
+        }
+    ],
+    "usage": {
+        "prompt_tokens": 99,
+        "total_tokens": 159,
+        "completion_tokens": 60,
+        "prompt_tokens_details": null,
+        "reasoning_tokens": 48
+    },
+    "metadata": {
+        "weight_version": "default",
+        "weight_versions": [
+            {
+                "version": "default",
+                "start": 0,
+                "end": 60
+            }
+        ]
+    }
+}
+
+=== streaming (10 chunks) ===
+data: {"id":"47830369b117466aa4e073abd5928243","object":"chat.completion.chunk","created":1792042802,"model":"moonshotai/Kimi-K3","choices":[{"index":0,"delta":{"reasoning_content":null,"role":"assistant","content":""},"logprobs":null,"finish_reason":null,"matched_stop":null}]}
+
+data: {"id":"47830369b117466aa4e073abd5928243","object":"chat.completion.chunk","created":1792042802,"model":"moonshotai/Kimi-K3","choices":[{"index":0,"delta":{"reasoning_content":"The"},"logprobs":null,"finish_reason":null,"matched_stop":null}]}
+
+data: {"id":"47830369b117466aa4e073abd5928243","object":"chat.completion.chunk","created":1792042802,"model":"moonshotai/Kimi-K3","choices":[{"index":0,"delta":{"reasoning_content":" user"},"logprobs":null,"finish_reason":null,"matched_stop":null}]}
+
+data: {"id":"47830369b117466aa4e073abd5928243","object":"chat.completion.chunk","created":1792042802,"model":"moonshotai/Kimi-K3","choices":[{"index":0,"delta":{"reasoning_content":" is"},"logprobs":null,"finish_reason":null,"matched_stop":null}]}
+
+data: {"id":"47830369b117466aa4e073abd5928243","object":"chat.completion.chunk","created":1792042802,"model":"moonshotai/Kimi-K3","choices":[{"index":0,"delta":{"reasoning_content":" asking"},"logprobs":null,"finish_reason":null,"matched_stop":null}]}
+

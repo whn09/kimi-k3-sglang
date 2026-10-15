@@ -15,7 +15,19 @@
    dcp, SM counts) can be compared with each other -- a patch that fails open
    (e.g. _uses_ep_a2a without deepep_v2) turns these into garbage.
 
-Exit 1 on a top-1 mismatch or a top-1 logprob off by more than --tol.
+Exit 1 on a top-1 mismatch, a top-5 overlap below --min-overlap, or a top-1
+logprob off by more than --tol.
+
+Why --tol is 0.30 and not tighter (measured 2026-10-15 on the sgla6a8c560 image,
+fib prompt top-1 logprob; reference -1.517 from the 0901 image):
+    new image, TP8, a2a=none   (patched code not on the path)  -1.771  |d|=0.254
+    new image, TP8, deepep_v2  (patched)                       -1.604  |d|=0.087
+    new image, PD TP16, deepep_v2                              -1.693  |d|=0.176
+The UNPATCHED arm drifts furthest, so a new base moves these values by itself
+(and none vs v2 differ in activation precision: v2 dispatches FP8). Every arm
+kept the same top-1 on all three prompts and 14/15 top-5 sets at 5/5. What
+this gate must catch is a patch failing open, which produces garbage, not a
+0.2 shift -- so: exact top-1, >=4/5 top-5, |d| <= 0.30.
 """
 import argparse
 import json
@@ -52,7 +64,8 @@ def main():
     ap.add_argument("--ref", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--model", default="moonshotai/Kimi-K3")
-    ap.add_argument("--tol", type=float, default=0.10)
+    ap.add_argument("--tol", type=float, default=0.30)
+    ap.add_argument("--min-overlap", type=int, default=4)
     a = ap.parse_args()
 
     ref = load_ref(a.ref)
@@ -72,7 +85,7 @@ def main():
             same_top1 = got[0][0] == want[0][0]
             d_top1 = abs(got[0][1] - want[0][1])
             overlap = len({t for t, _ in got} & {t for t, _ in want})
-            ok = same_top1 and d_top1 <= a.tol
+            ok = same_top1 and d_top1 <= a.tol and overlap >= a.min_overlap
             bad += 0 if ok else 1
             rec.update(top5=got, ref_top5=want, same_top1=same_top1,
                        d_top1=d_top1, top5_overlap=overlap, ok=ok)
