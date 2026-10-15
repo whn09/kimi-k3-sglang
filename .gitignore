@@ -235,3 +235,5 @@ k3_tech_report.pdf
 # macOS Finder metadata -- never useful in a repo, and it turns up in every
 # directory the laptop has browsed.
 .DS_Store
+.96_sm_sweep.run.sh
+results/logs/*.log

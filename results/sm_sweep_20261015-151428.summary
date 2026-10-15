@@ -1,0 +1,49 @@
+plan: attn=dp (prefill dcp=1, decode mem=0.86) sms=[12] x reps=1  spec=off  decode cap=512 maxrun=512  ISL/OSL=1024/2048  concs=[<92_sm_bench default>]
+image: 579019700964.dkr.ecr.ap-south-2.amazonaws.com/kimi-k3-sglang-b300:sgla6a8c560-deepep6de427b-nccl2312-efa1.50.0-smslog1
+  gpus free: B300-1
+  gpus free: B300-2
+### prefill TP16/EP16 on B300-1+B300-2
+    Warning: Permanently added 'ec2-16-112-214-62.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    NNODES=2: deepep_v2 mode direct -> hybrid (direct is intra-node only)
+    NNODES=2: custom all-reduce off (it is an intra-node P2P path)
+    NNODES=2: PREFILL_MEM_FRACTION 0.85 -> 0.78 (TP=16 has a bigger KV pool)
+    DeepEP v2: ep=16 mode=hybrid runner=deep_gemm cap=8192 gin=5 hca=rdmap
+    d0e29752cc02d721a419d3452cffdb4b68982b377e21ea733458c7b12308a9ad
+    launched 'kimi-k3-prefill' (profile=low-latency, mem=0.78, dcp=1, mamba=0.86, backend=mooncake)  ->  docker logs -f kimi-k3-prefill
+      a2a=deepep_v2 ep=16 mode=hybrid cap=8192 chunk=8192 decode-graphs=OFF
+      tp=16 over 2 nodes, this host is node-rank 0, rendezvous 172.31.10.219:29500
+      (rank != 0 never binds :30000 -- do not wait for 'server is fired up' there)
+    Warning: Permanently added 'ec2-16-113-24-47.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    NNODES=2: deepep_v2 mode direct -> hybrid (direct is intra-node only)
+    NNODES=2: custom all-reduce off (it is an intra-node P2P path)
+    NNODES=2: PREFILL_MEM_FRACTION 0.85 -> 0.78 (TP=16 has a bigger KV pool)
+    DeepEP v2: ep=16 mode=hybrid runner=deep_gemm cap=8192 gin=5 hca=rdmap
+    2f0c92048a5dac6b0ade79d8593a268fca62d16741e594bc5837dc4611e9ea5b
+    launched 'kimi-k3-prefill' (profile=low-latency, mem=0.78, dcp=1, mamba=0.86, backend=mooncake)  ->  docker logs -f kimi-k3-prefill
+      a2a=deepep_v2 ep=16 mode=hybrid cap=8192 chunk=8192 decode-graphs=OFF
+      tp=16 over 2 nodes, this host is node-rank 1, rendezvous 172.31.10.219:29500
+      (rank != 0 never binds :30000 -- do not wait for 'server is fired up' there)
+### decode TP16/EP16 on B300-3+B300-4 for the first run (sms=12), in parallel with prefill
+  gpus free: B300-3
+  gpus free: B300-4
+    Warning: Permanently added 'ec2-16-112-254-124.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    NNODES=2: deepep_v2 mode direct -> hybrid (direct is intra-node only)
+    NNODES=2: custom all-reduce off (it is an intra-node P2P path)
+    NNODES=2: DECODE_MEM_FRACTION 0.85 -> 0.78 (TP=16 has a bigger KV pool)
+    DeepEP v2: ep=16 mode=hybrid runner=deep_gemm cap=512 gin=5 hca=rdmap
+    f8d73ec782c2e0c03cf1b2e8f78684cfd4055cbe7e14779fda9eec8681fd79fe
+    launched 'kimi-k3-decode' (profile=low-latency, mem=0.86, dcp=1, mamba=0.17, symm=on)  ->  docker logs -f kimi-k3-decode
+      a2a=deepep_v2 ep=16 mode=hybrid cap=512 chunk=512 decode-graphs=ON max-bs=512 max-run=512 deepep-sms=12(0=auto) spec=off attn=dp
+      tp=16 over 2 nodes, this host is node-rank 0, rendezvous 172.31.0.212:29500
+      (rank != 0 never binds :30000 -- do not wait for 'server is fired up' there)
+    Warning: Permanently added 'ec2-16-113-127-156.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    NNODES=2: deepep_v2 mode direct -> hybrid (direct is intra-node only)
+    NNODES=2: custom all-reduce off (it is an intra-node P2P path)
+    NNODES=2: DECODE_MEM_FRACTION 0.85 -> 0.78 (TP=16 has a bigger KV pool)
+    DeepEP v2: ep=16 mode=hybrid runner=deep_gemm cap=512 gin=5 hca=rdmap
+    089e831c23ef0ad75945a3c1838613f646a2ca1a10835452f7725aec688fc38a
+    launched 'kimi-k3-decode' (profile=low-latency, mem=0.86, dcp=1, mamba=0.17, symm=on)  ->  docker logs -f kimi-k3-decode
+      a2a=deepep_v2 ep=16 mode=hybrid cap=512 chunk=512 decode-graphs=ON max-bs=512 max-run=512 deepep-sms=12(0=auto) spec=off attn=dp
+      tp=16 over 2 nodes, this host is node-rank 1, rendezvous 172.31.0.212:29500
+      (rank != 0 never binds :30000 -- do not wait for 'server is fired up' there)
+  ready: prefill on B300-1 after 240s

@@ -1,0 +1,81 @@
+NNODES=1: PREFILL_MEM_FRACTION 0.85 -> 0.92 (TP=8 keeps full weights; 0.85 leaves no KV pool)
+plan: attn=dp (prefill dcp=1) sms=[12] x reps=1  spec=off  decode cap=512 maxrun=512  ISL/OSL=1024/2048  concs=[<92_sm_bench default>]
+image: 579019700964.dkr.ecr.ap-south-2.amazonaws.com/kimi-k3-sglang-b300:sgla6a8c560-deepep6de427b-nccl2312-efa1.50.0-smslog1
+Warning: Permanently added 'ec2-16-112-214-62.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-113-24-47.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-112-254-124.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-113-127-156.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-112-214-62.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-113-24-47.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-112-254-124.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-113-127-156.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-112-214-62.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-113-24-47.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+96_sm_sweep.sh: line 98: cenv: command not found
+  gpus free: B300-1
+  gpus free: B300-2
+### prefill TP16/EP16 on B300-1+B300-2
+    Warning: Permanently added 'ec2-16-112-214-62.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    NNODES=2: deepep_v2 mode direct -> hybrid (direct is intra-node only)
+    NNODES=2: custom all-reduce off (it is an intra-node P2P path)
+    NNODES=2: PREFILL_MEM_FRACTION 0.85 -> 0.78 (TP=16 has a bigger KV pool)
+    DeepEP v2: ep=16 mode=hybrid runner=deep_gemm cap=8192 gin=5 hca=rdmap
+    3b92c41bebedd170254d54160913b9d53a5483b4021347516813f95b50df249c
+    launched 'kimi-k3-prefill' (profile=low-latency, mem=0.78, dcp=1, mamba=0.86, backend=mooncake)  ->  docker logs -f kimi-k3-prefill
+      a2a=deepep_v2 ep=16 mode=hybrid cap=8192 chunk=8192 decode-graphs=OFF
+      tp=16 over 2 nodes, this host is node-rank 0, rendezvous 172.31.10.219:29500
+      (rank != 0 never binds :30000 -- do not wait for 'server is fired up' there)
+    Warning: Permanently added 'ec2-16-113-24-47.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    NNODES=2: deepep_v2 mode direct -> hybrid (direct is intra-node only)
+    NNODES=2: custom all-reduce off (it is an intra-node P2P path)
+    NNODES=2: PREFILL_MEM_FRACTION 0.85 -> 0.78 (TP=16 has a bigger KV pool)
+    DeepEP v2: ep=16 mode=hybrid runner=deep_gemm cap=8192 gin=5 hca=rdmap
+    fd431bb4032ad5888f005544bbd655527cac5c936af103ff152ce86f4c1725e5
+    launched 'kimi-k3-prefill' (profile=low-latency, mem=0.78, dcp=1, mamba=0.86, backend=mooncake)  ->  docker logs -f kimi-k3-prefill
+      a2a=deepep_v2 ep=16 mode=hybrid cap=8192 chunk=8192 decode-graphs=OFF
+      tp=16 over 2 nodes, this host is node-rank 1, rendezvous 172.31.10.219:29500
+      (rank != 0 never binds :30000 -- do not wait for 'server is fired up' there)
+Warning: Permanently added 'ec2-16-112-214-62.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+### decode TP16/EP16 on B300-3+B300-4 for the first run (sms=12), in parallel with prefill
+Warning: Permanently added 'ec2-16-112-214-62.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+  gpus free: B300-3
+  gpus free: B300-4
+    Warning: Permanently added 'ec2-16-112-254-124.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    NNODES=2: deepep_v2 mode direct -> hybrid (direct is intra-node only)
+    NNODES=2: custom all-reduce off (it is an intra-node P2P path)
+    NNODES=2: DECODE_MEM_FRACTION 0.85 -> 0.78 (TP=16 has a bigger KV pool)
+    DeepEP v2: ep=16 mode=hybrid runner=deep_gemm cap=512 gin=5 hca=rdmap
+    c588de0b47831f720cdf436233d5b5c23e8a1f00ca0e5de324f5654f7d323761
+    launched 'kimi-k3-decode' (profile=low-latency, mem=0.78, dcp=1, mamba=0.17, symm=on)  ->  docker logs -f kimi-k3-decode
+      a2a=deepep_v2 ep=16 mode=hybrid cap=512 chunk=512 decode-graphs=ON max-bs=512 max-run=512 deepep-sms=12(0=auto) spec=off attn=dp
+      tp=16 over 2 nodes, this host is node-rank 0, rendezvous 172.31.0.212:29500
+      (rank != 0 never binds :30000 -- do not wait for 'server is fired up' there)
+    Warning: Permanently added 'ec2-16-113-127-156.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    NNODES=2: deepep_v2 mode direct -> hybrid (direct is intra-node only)
+    NNODES=2: custom all-reduce off (it is an intra-node P2P path)
+    NNODES=2: DECODE_MEM_FRACTION 0.85 -> 0.78 (TP=16 has a bigger KV pool)
+    DeepEP v2: ep=16 mode=hybrid runner=deep_gemm cap=512 gin=5 hca=rdmap
+    5a6f7c1328af14b088a68bb14f5f6f51a483996882b4afd0c55f897f736f3724
+    launched 'kimi-k3-decode' (profile=low-latency, mem=0.78, dcp=1, mamba=0.17, symm=on)  ->  docker logs -f kimi-k3-decode
+      a2a=deepep_v2 ep=16 mode=hybrid cap=512 chunk=512 decode-graphs=ON max-bs=512 max-run=512 deepep-sms=12(0=auto) spec=off attn=dp
+      tp=16 over 2 nodes, this host is node-rank 1, rendezvous 172.31.0.212:29500
+      (rank != 0 never binds :30000 -- do not wait for 'server is fired up' there)
+  ready: prefill on B300-1 after 210s
+
+### decode TP16/EP16 on B300-3+B300-4, DECODE_DEEPEP_NUM_SMS=12  (dp_sms12_r1, 2026-10-15T07:03:36Z)
+  DIED: decode on B300-3 -- kimi-k3-decode on B300-3 is 'exited' after 30s
+          result = self.kv_cache_configurator.configure(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "/sgl-workspace/sglang/python/sglang/srt/mem_cache/kv_cache_configurator.py", line 436, in configure
+          config = self._resolve_memory_pool_config(pre_model_load_memory)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "/sgl-workspace/sglang/python/sglang/srt/mem_cache/kv_cache_configurator.py", line 2860, in _resolve_memory_pool_config
+          available_bytes = self._profile_available_bytes(pre_model_load_memory)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "/sgl-workspace/sglang/python/sglang/srt/mem_cache/kv_cache_configurator.py", line 2728, in _profile_available_bytes
+          raise ValueError(
+      ValueError: Loaded weights leave no GPU memory for the KV cache under --mem-fraction-static=0.78. Raise --mem-fraction-static above 0.733 (minimum viable = 1 - available/pre = 0.7327). If using speculative decoding, draft weights are now counted.
+      
+      [2026-10-15 07:01:52] Received sigquit from a child process. It usually means the child failed.
+      [2026-10-15 07:01:52] Received sigquit from a child process. It usually means the child failed.
+      [2026-10-15 07:01:52] kill_process_tree called: parent_pid=386, include_parent=True, pid=386

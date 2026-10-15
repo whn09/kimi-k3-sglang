@@ -28,7 +28,8 @@ NPROMPT_MULT="${NPROMPT_MULT:-2}"          # two full waves per point
 REP="${REP:-1}"
 REQ_SMS="${REQ_SMS:?REQ_SMS (requested decode SMs, 0 = auto)}"
 RESOLVED_SMS="${RESOLVED_SMS:-unknown}"
-DECODE_URL="${DECODE_URL:-http://${B300_3_IP}:${PORT}}"
+# Every decode node: under DP attention each node exports only its own dp_ranks.
+DECODE_URLS="${DECODE_URLS:-http://${B300_3_IP}:${PORT} http://${B300_4_IP}:${PORT}}"
 # Image generation from the image actually benched (not from IMAGE_TAG, which
 # an IMAGE= override does not touch): "...:sgla6a8c560-deepep..." -> sgla6a8c560
 IMG="${IMAGE##*:}"; IMG="${IMG%%-*}"
@@ -49,7 +50,7 @@ for c in $CONCS; do
     n=$(( c * NPROMPT_MULT )); (( n < 64 )) && n=64
     tag="k3s_pd2x2_dec-${ATTN}16ep16_sms${REQ_SMS}_spec${SPEC}_cap${CAPD}_run${MAXRUN_D}_isl${ISL}_osl${OSL}_c${c}_n${n}_r${REP}_img-${IMG}_$(date +%Y%m%d-%H%M%S)"
     echo "== $tag  (resolved sms=$RESOLVED_SMS)"
-    python3 decode_sampler.py --out "$OUT/$tag.decode.json" --target "$c" "$DECODE_URL" &
+    python3 decode_sampler.py --out "$OUT/$tag.decode.json" --target "$c" $DECODE_URLS &
     spid=$!
     run_bench "$c" "$n" "$tag" 2>&1 | grep -E "Successful requests|Benchmark duration|Output token throughput|Median TTFT|Median TPOT|P99 TPOT|Median ITL" || true
     kill -INT "$spid"; wait "$spid" || true

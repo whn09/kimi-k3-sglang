@@ -163,7 +163,9 @@ for rep in $(seq 1 "$REPS"); do
             say "FATAL: asked for $sms SMs, DeepEP is using $vals"; exit 1
         fi
         say "  DeepEP resolved num_sms=$vals on all 16 ranks (requested $sms; 0 = auto)"
-        note_kv_pool "$D0" kimi-k3-decode $(( ISL + OSL )) "$MAXRUN_D"
+        # Under DP attention each rank has its OWN pool for MAXRUN/TP of the requests.
+        kv_need=$MAXRUN_D; [[ "$DECODE_ATTN" == dp ]] && kv_need=$(( MAXRUN_D / 16 ))
+        note_kv_pool "$D0" kimi-k3-decode $(( ISL + OSL )) "$kv_need"
 
         sshx "$P0" "cd $REMOTE && PREFILL_IPS=$B300_1_IP DECODE_IPS=$B300_3_IP ROUTER_POLICY=round_robin IMAGE=$IMAGE bash 22_launch_router.sh" 2>&1 | sed 's/^/    /' | tee -a "$SUMMARY"
         sleep 20

@@ -1,0 +1,104 @@
+NNODES=1: PREFILL_MEM_FRACTION 0.85 -> 0.92 (TP=8 keeps full weights; 0.85 leaves no KV pool)
+plan: attn=dp (prefill dcp=1, decode mem=0.86) sms=[12] x reps=1  spec=off  decode cap=512 maxrun=512  ISL/OSL=1024/2048  concs=[<92_sm_bench default>]
+image: 579019700964.dkr.ecr.ap-south-2.amazonaws.com/kimi-k3-sglang-b300:sgla6a8c560-deepep6de427b-nccl2312-efa1.50.0-smslog1
+Warning: Permanently added 'ec2-16-112-214-62.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-113-24-47.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-112-254-124.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-113-127-156.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-112-214-62.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-113-24-47.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-112-254-124.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-113-127-156.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-112-214-62.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-113-24-47.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-112-214-62.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+### prefill containers already running on B300-1+B300-2 -- reusing (they must have spec=off)
+Warning: Permanently added 'ec2-16-112-214-62.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-112-254-124.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-113-127-156.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-112-254-124.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-112-254-124.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-113-127-156.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-113-127-156.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-112-254-124.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-113-127-156.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+### decode containers already running on B300-3+B300-4 with sms=12 -- reusing for the first run
+  ready: prefill on B300-1 after 30s
+
+### decode TP16/EP16 on B300-3+B300-4, DECODE_DEEPEP_NUM_SMS=12  (dp_sms12_r1, 2026-10-15T07:24:31Z)
+  ready: decode on B300-3 after 30s
+Warning: Permanently added 'ec2-16-112-254-124.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+Warning: Permanently added 'ec2-16-113-127-156.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+  DeepEP resolved num_sms=12 on all 16 ranks (requested 12; 0 = auto)
+  note B300-3/kimi-k3-decode kv-pool: 735104 tokens (18.93 GB) / 3072 per req = 239 resident; POOL BINDS FIRST: 239 < MAXRUN=512 -- expect bootstrap backpressure in TTFT
+    Warning: Permanently added 'ec2-16-112-214-62.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    NNODES=1: PREFILL_MEM_FRACTION 0.85 -> 0.92 (TP=8 keeps full weights; 0.85 leaves no KV pool)
+    single-node deepep_v2 mode=direct: GIN type 5 -> 3 (type 5 needs >1 node)
+    router  : 0.0.0.0:8080   (1P1D)  policy=round_robin
+    prefill : http://172.31.10.219:30000 (bootstrap 8998)
+    decode  : http://172.31.0.212:30000
+    c9983c4d583fdbde6526004f6011c70252358f2cfe9f68a09f27c124c36d5680
+    launched 'kimi-k3-router'  ->  docker logs -f kimi-k3-router
+    Warning: Permanently added 'ec2-16-112-214-62.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    OK    'The capital of France is': top1 ' Paris' -0.3797 (ref ' Paris' -0.2957, |d|=0.0840) top5 overlap 5/5
+          continuation: ' Paris.",\n+            "The Eiffel Tower is located in Paris.",\n+            "Paris is known for its art and culture.",\n+            "The Louvre'
+    OK    '2 + 2 =': top1 ' ' -0.1339 (ref ' ' -0.1493, |d|=0.0154) top5 overlap 5/5
+          continuation: ' 4\n- 2 + 2 = 4\n- 2 + 2 = 4\n- 2 + 2 = 4'
+    OK    'def fibonacci(n):': top1 ' \n' -1.6934 (ref ' \n' -1.5171, |d|=0.1763) top5 overlap 4/5
+          continuation: ' \n    if n < 0: \n        print("Incorrect input") \n    elif n == 0: \n        return 0\n    elif n'
+Warning: Permanently added 'ec2-16-112-214-62.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+NNODES=1: PREFILL_MEM_FRACTION 0.85 -> 0.92 (TP=8 keeps full weights; 0.85 leaves no KV pool)
+single-node deepep_v2 mode=direct: GIN type 5 -> 3 (type 5 needs >1 node)
+== warmup (not saved as a result)
+== k3s_pd2x2_dec-dp16ep16_sms12_specoff_cap512_run512_isl1024_osl2048_c128_n256_r1_img-sgla6a8c560_20261015-072959  (resolved sms=12)
+Successful requests:                     256       
+Benchmark duration (s):                  291.52    
+Output token throughput (tok/s):         1798.49   
+Median TTFT (ms):                        1826.09   
+Median TPOT (ms):                        69.13     
+P99 TPOT (ms):                           69.33     
+Median ITL (ms):                         68.51     
+sampler: max_running=8/128 sat_window=0s sat_gen_tok_s=None
+== k3s_pd2x2_dec-dp16ep16_sms12_specoff_cap512_run512_isl1024_osl2048_c256_n512_r1_img-sgla6a8c560_20261015-073528  (resolved sms=12)
+Successful requests:                     512       
+Benchmark duration (s):                  326.73    
+Output token throughput (tok/s):         3209.30   
+Median TTFT (ms):                        2136.51   
+Median TPOT (ms):                        76.27     
+P99 TPOT (ms):                           77.05     
+Median ITL (ms):                         74.99     
+sampler: max_running=16/256 sat_window=0s sat_gen_tok_s=None
+== k3s_pd2x2_dec-dp16ep16_sms12_specoff_cap512_run512_isl1024_osl2048_c512_n1024_r1_img-sgla6a8c560_20261015-074139  (resolved sms=12)
+Successful requests:                     1024      
+Benchmark duration (s):                  363.43    
+Output token throughput (tok/s):         5770.45   
+Median TTFT (ms):                        3598.48   
+Median TPOT (ms):                        81.82     
+P99 TPOT (ms):                           82.45     
+Median ITL (ms):                         81.05     
+sampler: max_running=32/512 sat_window=0s sat_gen_tok_s=None
+Warning: Permanently added 'ec2-16-112-214-62.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+  pulled <- B300-1
+| image/attn/spec | ISL/OSL | conc | SM (req -> used) | reps | decode-full tok/s | max running / target | TPOT p50 (ms) | ITL p50 (ms) | TPOT p99 (ms) | client out tok/s | dur (s) |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| sgl07c8f729/tp/spec-off | 1024/2048 | 128 | 12 -> 12 | 1 | 1496 | 128 / 128 | 85.19 | 85.42 | 85.44 | 1411 | 372 |
+| sgl07c8f729/tp/spec-off | 1024/2048 | 128 | auto -> 64 | 1 | 1408 | 128 / 128 | 90.67 | 90.85 | 90.91 | 1378 | 380 |
+| sgl07c8f729/tp/spec-off | 1024/2048 | 256 | 12 -> 12 | 1 | 2718 | 256 / 256 | 93.65 | 93.85 | 93.87 | 2634 | 398 |
+| sgl07c8f729/tp/spec-off | 1024/2048 | 256 | auto -> 64 | 1 | 2481 | 256 / 256 | 102.53 | 102.60 | 102.94 | 2413 | 434 |
+| sgl07c8f729/tp/spec-off | 1024/2048 | 512 | 12 -> 12 | 1 | 4892 | 512 / 512 | 103.81 | 104.22 | 104.23 | 4635 | 452 |
+| sgl07c8f729/tp/spec-off | 1024/2048 | 512 | auto -> 64 | 1 | 4451 | 512 / 512 | 114.22 | 114.51 | 114.75 | 4239 | 495 |
+| sgla6a8c560/dp/spec-off | 1024/2048 | 128 | 12 -> 12 | 1 | NOT FULL | 8 / 128 | 69.13 | 68.51 | 69.33 | 1798 | 292 |
+| sgla6a8c560/dp/spec-off | 1024/2048 | 256 | 12 -> 12 | 1 | NOT FULL | 16 / 256 | 76.27 | 74.99 | 77.05 | 3209 | 327 |
+| sgla6a8c560/dp/spec-off | 1024/2048 | 512 | 12 -> 12 | 1 | NOT FULL | 32 / 512 | 81.82 | 81.05 | 82.45 | 5770 | 363 |
+| sgla6a8c560/tp/spec-off | 1024/2048 | 128 | 12 -> 12 | 1 | 1513 | 128 / 128 | 84.36 | 84.54 | 84.59 | 1472 | 356 |
+| sgla6a8c560/tp/spec-off | 1024/2048 | 256 | 12 -> 12 | 1 | 2748 | 256 / 256 | 92.72 | 92.93 | 93.03 | 2662 | 394 |
+| sgla6a8c560/tp/spec-off | 1024/2048 | 512 | 12 -> 12 | 1 | 4951 | 512 / 512 | 102.70 | 103.02 | 103.06 | 4707 | 446 |
+
+**SM12 vs auto** (positive tok/s and negative TPOT favour SM12; noise = larger of the two arms' own max-min spread)
+
+| image/attn/spec | ISL/OSL | conc | Δ decode-full tok/s | Δ TPOT p50 | noise (tok/s / TPOT) | verdict |
+|---|---|---|---|---|---|---|
+| sgl07c8f729/tp/spec-off | 1024/2048 | 128 | +6.2% | -6.0% | 0.0% / 0.0% | 1 rep: no noise floor |
+| sgl07c8f729/tp/spec-off | 1024/2048 | 256 | +9.5% | -8.7% | 0.0% / 0.0% | 1 rep: no noise floor |
+| sgl07c8f729/tp/spec-off | 1024/2048 | 512 | +9.9% | -9.1% | 0.0% / 0.0% | 1 rep: no noise floor |
+done. Containers left up (prefill reusable). Free with: teardown on all 4 hosts.

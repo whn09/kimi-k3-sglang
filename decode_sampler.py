@@ -17,9 +17,14 @@ Differences from the vLLM sampler, both forced by sglang:
   over its last log interval; the launcher sets --decode-log-interval 1), not a
   counter delta: sglang's `generation_tokens_total` is incremented when a
   request FINISHES, so over a 5 s window it is a step function.
-- Series are combined with MAX, not SUM: a TP instance's ranks all report the
-  same batch, so summing would multiply by the TP degree. (A DP-attention decode
-  would need SUM; this kit's decode is TP.)
+- Series are grouped by their dp_rank label: MAX within a dp_rank (a TP group's
+  ranks all report the same batch, so summing would multiply by the TP degree),
+  then SUM across dp_ranks (DP attention: every DP rank serves its own requests).
+  A TP instance has one dp_rank, so this degenerates to MAX. Under DP attention
+  each node's /metrics exports only ITS dp_ranks (node 0: 0-7, node 1: 8-15), so
+  pass every decode node's URL; an unreachable one (a TP rank-1 node serves no
+  HTTP) is skipped. The first dp run read node 0 only with MAX and reported
+  max_running=8/128 -- decode_from_logs.py recomputed it from the logs.
 """
 import argparse
 import json
@@ -30,7 +35,20 @@ import time
 import urllib.request
 
 def gauge(name):
-    return re.compile(r'^' + re.escape(name) + r'(?:\{[^}]*\})?\s+([0-9.e+-]+)$', re.M)
+    return re.compile(r'^' + re.escape(name) + r'(?:\{([^}]*)\})?\s+([0-9.e+-]+)$', re.M)
+
+
+DP = re.compile(r'dp_rank="(\d+)"')
+
+
+def combine(series):
+    """[(labels, value)] -> MAX within each dp_rank, SUM across dp_ranks."""
+    per = {}
+    for labels, v in series:
+        m = DP.search(labels or "")
+        k = m.group(1) if m else "_"
+        per[k] = max(per.get(k, v), v)
+    return sum(per.values()) if per else None
 
 RUN = gauge("sglang:num_running_reqs")
 QUEUE = gauge("sglang:num_queue_reqs")
@@ -41,14 +59,17 @@ USAGE = gauge("sglang:token_usage")
 def scrape(urls):
     run, queue, tput, usage = [], [], [], []
     for u in urls:
-        txt = urllib.request.urlopen(u + "/metrics", timeout=5).read().decode()
-        run += [float(x) for x in RUN.findall(txt)]
-        queue += [float(x) for x in QUEUE.findall(txt)]
-        tput += [float(x) for x in TPUT.findall(txt)]
-        usage += [float(x) for x in USAGE.findall(txt)]
+        try:
+            txt = urllib.request.urlopen(u + "/metrics", timeout=5).read().decode()
+        except Exception:
+            continue          # e.g. a TP rank-1 node, which serves no HTTP
+        run += [(l, float(x)) for l, x in RUN.findall(txt)]
+        queue += [(l, float(x)) for l, x in QUEUE.findall(txt)]
+        tput += [(l, float(x)) for l, x in TPUT.findall(txt)]
+        usage += [float(x) for _, x in USAGE.findall(txt)]
     if not run:
-        raise RuntimeError("no sglang:num_running_reqs in /metrics -- is --enable-metrics on?")
-    return max(run), max(queue, default=0.0), max(tput, default=None), max(usage, default=None)
+        raise RuntimeError("no sglang:num_running_reqs on any URL -- is --enable-metrics on?")
+    return combine(run), combine(queue) or 0.0, combine(tput), max(usage, default=None)
 
 
 def summarize(samples, target, sat_frac):

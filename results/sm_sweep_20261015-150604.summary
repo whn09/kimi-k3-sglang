@@ -1,0 +1,67 @@
+plan: attn=dp (prefill dcp=1, decode mem=0.86) sms=[12] x reps=1  spec=off  decode cap=512 maxrun=512  ISL/OSL=1024/2048  concs=[<92_sm_bench default>]
+image: 579019700964.dkr.ecr.ap-south-2.amazonaws.com/kimi-k3-sglang-b300:sgla6a8c560-deepep6de427b-nccl2312-efa1.50.0-smslog1
+  gpus free: B300-1
+  gpus free: B300-2
+### prefill TP16/EP16 on B300-1+B300-2
+    Warning: Permanently added 'ec2-16-112-214-62.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    NNODES=2: deepep_v2 mode direct -> hybrid (direct is intra-node only)
+    NNODES=2: custom all-reduce off (it is an intra-node P2P path)
+    NNODES=2: PREFILL_MEM_FRACTION 0.85 -> 0.78 (TP=16 has a bigger KV pool)
+    DeepEP v2: ep=16 mode=hybrid runner=deep_gemm cap=8192 gin=5 hca=rdmap
+    84fe6931866f7d265aed0980847ca109cddaaaf02f22cd3d8b5b68e00b520606
+    launched 'kimi-k3-prefill' (profile=low-latency, mem=0.78, dcp=1, mamba=0.86, backend=mooncake)  ->  docker logs -f kimi-k3-prefill
+      a2a=deepep_v2 ep=16 mode=hybrid cap=8192 chunk=8192 decode-graphs=OFF
+      tp=16 over 2 nodes, this host is node-rank 0, rendezvous 172.31.10.219:29500
+      (rank != 0 never binds :30000 -- do not wait for 'server is fired up' there)
+    Warning: Permanently added 'ec2-16-113-24-47.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    NNODES=2: deepep_v2 mode direct -> hybrid (direct is intra-node only)
+    NNODES=2: custom all-reduce off (it is an intra-node P2P path)
+    NNODES=2: PREFILL_MEM_FRACTION 0.85 -> 0.78 (TP=16 has a bigger KV pool)
+    DeepEP v2: ep=16 mode=hybrid runner=deep_gemm cap=8192 gin=5 hca=rdmap
+    a42cd7fa1f93a49c2991e87b87e61c6732d11f2b1afa3af9651e57a1eb03e661
+    launched 'kimi-k3-prefill' (profile=low-latency, mem=0.78, dcp=1, mamba=0.86, backend=mooncake)  ->  docker logs -f kimi-k3-prefill
+      a2a=deepep_v2 ep=16 mode=hybrid cap=8192 chunk=8192 decode-graphs=OFF
+      tp=16 over 2 nodes, this host is node-rank 1, rendezvous 172.31.10.219:29500
+      (rank != 0 never binds :30000 -- do not wait for 'server is fired up' there)
+### decode TP16/EP16 on B300-3+B300-4 for the first run (sms=12), in parallel with prefill
+  gpus free: B300-3
+  gpus free: B300-4
+    Warning: Permanently added 'ec2-16-112-254-124.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    NNODES=2: deepep_v2 mode direct -> hybrid (direct is intra-node only)
+    NNODES=2: custom all-reduce off (it is an intra-node P2P path)
+    NNODES=2: DECODE_MEM_FRACTION 0.85 -> 0.78 (TP=16 has a bigger KV pool)
+    DeepEP v2: ep=16 mode=hybrid runner=deep_gemm cap=512 gin=5 hca=rdmap
+    bddb92c9f0af26e753bbf5095693452921a148dd39589d017ecde33559b97cce
+    launched 'kimi-k3-decode' (profile=low-latency, mem=0.86, dcp=1, mamba=0.17, symm=on)  ->  docker logs -f kimi-k3-decode
+      a2a=deepep_v2 ep=16 mode=hybrid cap=512 chunk=512 decode-graphs=ON max-bs=512 max-run=512 deepep-sms=12(0=auto) spec=off attn=dp
+      tp=16 over 2 nodes, this host is node-rank 0, rendezvous 172.31.0.212:29500
+      (rank != 0 never binds :30000 -- do not wait for 'server is fired up' there)
+    Warning: Permanently added 'ec2-16-113-127-156.ap-south-2.compute.amazonaws.com' (ED25519) to the list of known hosts.
+    NNODES=2: deepep_v2 mode direct -> hybrid (direct is intra-node only)
+    NNODES=2: custom all-reduce off (it is an intra-node P2P path)
+    NNODES=2: DECODE_MEM_FRACTION 0.85 -> 0.78 (TP=16 has a bigger KV pool)
+    DeepEP v2: ep=16 mode=hybrid runner=deep_gemm cap=512 gin=5 hca=rdmap
+    1105e2a3fa9376e37472885c5a7ba22c52f71c81f2ef54a160bbe009d67d768d
+    launched 'kimi-k3-decode' (profile=low-latency, mem=0.86, dcp=1, mamba=0.17, symm=on)  ->  docker logs -f kimi-k3-decode
+      a2a=deepep_v2 ep=16 mode=hybrid cap=512 chunk=512 decode-graphs=ON max-bs=512 max-run=512 deepep-sms=12(0=auto) spec=off attn=dp
+      tp=16 over 2 nodes, this host is node-rank 1, rendezvous 172.31.0.212:29500
+      (rank != 0 never binds :30000 -- do not wait for 'server is fired up' there)
+  ready: prefill on B300-1 after 240s
+
+### decode TP16/EP16 on B300-3+B300-4, DECODE_DEEPEP_NUM_SMS=12  (dp_sms12_r1, 2026-10-15T07:12:05Z)
+  DIED: decode on B300-3 -- kimi-k3-decode on B300-3 is 'exited' after 30s
+        File "/sgl-workspace/sglang/python/sglang/srt/layers/attention/trtllm_mla_backend.py", line 1041, in _run_decode_kernel
+          return flashinfer.decode.trtllm_batch_decode_with_kv_cache_mla(
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "/opt/sglang/lib/python3.12/site-packages/flashinfer/api_logging.py", line 2369, in _auto_dump_wrapper
+          return _inner(*args, **kwargs)
+                 ^^^^^^^^^^^^^^^^^^^^^^^
+        File "/opt/sglang/lib/python3.12/site-packages/flashinfer/mla/_core.py", line 4607, in trtllm_batch_decode_with_kv_cache_mla
+          return _trtllm_batch_decode_with_kv_cache_mla_impl(
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        File "/opt/sglang/lib/python3.12/site-packages/flashinfer/mla/_core.py", line 4454, in _trtllm_batch_decode_with_kv_cache_mla_impl
+          raise ValueError(
+      ValueError: multi_ctas_kv_counter_buffer is only supported when a trtllm-gen runner is selected
+      
+      [2026-10-15 07:10:33] Received sigquit from a child process. It usually means the child failed.
+      [2026-10-15 07:10:33] kill_process_tree called: parent_pid=384, include_parent=True, pid=384
