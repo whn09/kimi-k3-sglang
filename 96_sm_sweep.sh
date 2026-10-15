@@ -33,6 +33,9 @@ source ./lib_drive.sh
 
 SMS_LIST="${SMS_LIST:-12 0}"
 REPS="${REPS:-2}"
+# First replicate index, to extend an existing sweep without redoing its rounds
+# (e.g. REP_START=2 REPS=1 adds round 2 only).
+REP_START="${REP_START:-1}"
 NO_SPEC="${NO_SPEC:-1}"
 # Decode attention layout (start_decode.sh): tp (pd2x2 default) | dp (= vLLM DP16) | dcp.
 # dcp needs prefill on the same dcp, so prefill is relaunched when it differs.
@@ -135,7 +138,7 @@ fi
 prelaunched=1
 WAIT_CONTAINER=kimi-k3-prefill wait_ready "$P0" "$PORT" "prefill on $P0" || exit 1
 
-for rep in $(seq 1 "$REPS"); do
+for rep in $(seq "$REP_START" $(( REP_START + REPS - 1 ))); do
     for sms in $SMS_LIST; do
         label="${DECODE_ATTN}_sms${sms}_r${rep}"
         say ""
