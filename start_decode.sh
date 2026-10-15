@@ -56,7 +56,13 @@ DCP_ARGS=()
 ATTN_ARGS=()
 case "${DECODE_ATTN:-tp}" in
     tp)  ;;
-    dp)  ATTN_ARGS=(--enable-dp-attention --dp-size "$TP_SIZE") ;;
+    # trtllm-gen MLA decode rejects 64 < num_heads_q < 128 (flashinfer 0.7.1
+    # mla/_core.py), and DP attention gives each rank all 96 of K3's heads (TP16
+    # gives 6), so the default trtllm_mla backend dies in graph capture with
+    # "multi_ctas_kv_counter_buffer is only supported when a trtllm-gen runner
+    # is selected". cute-dsl is the only MLA decode runner left for 96 heads.
+    dp)  ATTN_ARGS=(--enable-dp-attention --dp-size "$TP_SIZE"
+                    --decode-attention-backend "${DP_DECODE_ATTN_BACKEND:-cutedsl_mla}") ;;
     dcp) DCP_ARGS=(--dcp-size "$TP_SIZE") ;;
     *)   echo "FATAL: DECODE_ATTN must be tp|dp|dcp, got '${DECODE_ATTN}'" >&2; exit 1 ;;
 esac
