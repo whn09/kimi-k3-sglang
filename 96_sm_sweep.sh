@@ -39,6 +39,7 @@ NO_SPEC="${NO_SPEC:-1}"
 DECODE_ATTN="${DECODE_ATTN:-tp}"
 PREFILL_DCP=$([[ "$DECODE_ATTN" == dcp ]] && echo 16 || echo 1)
 SPEC=$([[ "$NO_SPEC" == 1 ]] && echo off || echo on)
+IMG="${IMAGE##*:}"; IMG="${IMG%%-*}"   # image generation, e.g. sgla6a8c560
 CAPD="${CAPD:-512}"
 MAXRUN_D="${MAXRUN_D:-512}"
 ISL="${ISL:-1024}"
@@ -150,6 +151,11 @@ for rep in $(seq 1 "$REPS"); do
         sshx "$P0" "cd $REMOTE && ENDPOINT=localhost:$ROUTER_PORT bash 90_smoke_test.sh" > "$LOCAL_RESULTS/logs/smoke_${label}.txt" 2>&1
         grep -q '"content"' "$LOCAL_RESULTS/logs/smoke_${label}.txt" \
             || { say "FATAL: smoke test returned no completion -- $LOCAL_RESULTS/logs/smoke_${label}.txt"; exit 1; }
+        # Numerics gate (bench/lp_check.py): first-token logprobs vs the validated
+        # reference + a greedy continuation per prompt, saved for cross-arm diffs.
+        # Mandatory on a new base/patch set: a patch that fails open is silent.
+        sshx "$P0" "cd $REMOTE && python3 bench/lp_check.py --url http://localhost:$ROUTER_PORT --ref results/raw/k3_lp_v2.txt --out results/numerics_${label}_img-${IMG}.json" 2>&1 | tee -a "$SUMMARY" | sed 's/^/    /'
+        (( ${PIPESTATUS[0]} == 0 )) || { say "FATAL: numerics gate failed on $label -- not benchmarking a wrong model"; exit 1; }
 
         sshx "$P0" "cd $REMOTE && ISL=$ISL OSL=$OSL CAPD=$CAPD MAXRUN_D=$MAXRUN_D SPEC=$SPEC ATTN=$DECODE_ATTN ${CONCS:+CONCS='$CONCS'} REQ_SMS=$sms RESOLVED_SMS=$vals REP=$rep IMAGE=$IMAGE bash 92_sm_bench.sh" 2>&1 | tee -a "$SUMMARY"
         rc=${PIPESTATUS[0]}
