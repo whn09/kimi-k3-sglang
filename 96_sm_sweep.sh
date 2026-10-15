@@ -94,6 +94,10 @@ running() {
     [[ "$(sshx "$1" "docker inspect -f '{{.State.Status}} {{.Config.Image}}' $2 2>/dev/null")" == "running $IMAGE" ]]
 }
 
+# One env var of a running container. Defined before its first use (the
+# prefill reuse check) -- defined later, the check silently always failed.
+cenv() { sshx "$1" "docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' $2 2>/dev/null | sed -n 's/^$3=//p'"; }
+
 # ---- prefill (once) and the FIRST decode, booted in parallel ----
 # Decode does not need prefill up to boot -- it learns the prefill address per
 # request from the bootstrap info -- so the two ~10 min cold boots overlap.
@@ -112,7 +116,6 @@ else
     sshx "$P0" "cd $REMOTE && $PENV NODE_RANK=0 bash 20_launch_prefill.sh" 2>&1 | sed 's/^/    /' | tee -a "$SUMMARY"
     sshx "$P1" "cd $REMOTE && $PENV NODE_RANK=1 bash 20_launch_prefill.sh" 2>&1 | sed 's/^/    /' | tee -a "$SUMMARY"
 fi
-cenv() { sshx "$1" "docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' $2 2>/dev/null | sed -n 's/^$3=//p'"; }
 dec_ok() { [[ "$(cenv "$1" kimi-k3-decode SGLANG_DEEPEP_V2_NUM_SMS)" == "$first_sms" \
               && "$(cenv "$1" kimi-k3-decode DECODE_ATTN)" == "$DECODE_ATTN" ]]; }
 # A decode is never reused across a prefill restart: it keeps the old prefill's
